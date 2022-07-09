@@ -29,8 +29,11 @@ const ITERATIONS: i32 = 100;
 // const IMAGE_NAME: &str = "img/wild_potatoes.jpeg";
 // const IMAGE_NAME: &str = "img/aroura_sky.jpg";
 const IMAGE_NAME: &str = "img/fire.jpg";
+// format, Image or Gif. for Gifs, it will take the first frame of the gif
 const FORMAT: InputFormat = InputFormat::Image;
+// chance that it will pick the new option, even if it is worse
 const RANDOM_CHANCE_QTY: usize = 30;
+// ammount to move each point by each time
 const SHIFT_AMNT: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
