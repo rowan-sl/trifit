@@ -2,6 +2,10 @@ use image::GenericImageView;
 
 use crate::*;
 
+pub fn rectangle_by_points(c0: F64x2, c1: F64x2) -> [f64; 4] {
+    graphics::rectangle::rectangle_by_corners(c0.x, c0.y, c1.x, c1.y)
+}
+
 pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8>> {
     fn sign(p1: F64x2, p2: F64x2, p3: F64x2) -> f64 {
         return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
@@ -34,10 +38,18 @@ pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8
         }
     }
 
-    let minx = min(min(triangle.0.x, triangle.1.x), triangle.2.x).floor().clamp(0.0, image.width() as f64) as u32;
-    let maxx = max(max(triangle.0.x, triangle.1.x), triangle.2.x).ceil().clamp(0.0, image.width() as f64) as u32;
-    let miny = min(min(triangle.0.y, triangle.1.y), triangle.2.y).floor().clamp(0.0, image.height() as f64) as u32;
-    let maxy = max(max(triangle.0.y, triangle.1.y), triangle.2.y).ceil().clamp(0.0, image.height() as f64) as u32;
+    let minx = min(min(triangle.0.x, triangle.1.x), triangle.2.x)
+        .floor()
+        .clamp(0.0, image.width() as f64) as u32;
+    let maxx = max(max(triangle.0.x, triangle.1.x), triangle.2.x)
+        .ceil()
+        .clamp(0.0, image.width() as f64) as u32;
+    let miny = min(min(triangle.0.y, triangle.1.y), triangle.2.y)
+        .floor()
+        .clamp(0.0, image.height() as f64) as u32;
+    let maxy = max(max(triangle.0.y, triangle.1.y), triangle.2.y)
+        .ceil()
+        .clamp(0.0, image.height() as f64) as u32;
     let width = maxx - minx;
     let height = maxy - miny;
     // println!("img: {}x{}", image.width(), image.height());
@@ -45,7 +57,8 @@ pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8
     // println!("    sub image demensions: {}x{}", width, height);
 
     // for (x, y, pxl) in image.view(minx, miny, width, height).enumerate_pixels()
-    image.view(minx, miny, width, height)
+    image
+        .view(minx, miny, width, height)
         .to_image()
         .enumerate_pixels()
         .map(|(x, y, px)| (x + minx, y + miny, px))
@@ -63,7 +76,7 @@ pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8
         })
         .filter(|o| o.is_some())
         .map(|o| o.unwrap())
-    .collect()
+        .collect()
 }
 
 pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
@@ -83,11 +96,13 @@ pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
 
 pub fn score(colors: &Vec<Rgb<u8>>) -> f64 {
     let avg = average(colors);
-    let deviations: Vec<f64> = colors.iter()
+    let deviations: Vec<f64> = colors
+        .iter()
         .map(|c| {
-            ((avg.0[0] as f64 - c.0[0] as f64).abs() +
-            (avg.0[1] as f64 - c.0[1] as f64).abs() +
-            (avg.0[2] as f64 - c.0[2] as f64).abs()) / 3.0
+            ((avg.0[0] as f64 - c.0[0] as f64).abs()
+                + (avg.0[1] as f64 - c.0[1] as f64).abs()
+                + (avg.0[2] as f64 - c.0[2] as f64).abs())
+                / 3.0
         })
         .collect();
     let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
@@ -99,7 +114,8 @@ pub fn score(colors: &Vec<Rgb<u8>>) -> f64 {
 }
 
 pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>) -> f64 {
-    let scores: Vec<f64> = group.iter()
+    let scores: Vec<f64> = group
+        .iter()
         .map(|t| score(&get_color_in_triangle(image, *t)))
         .collect();
     // println!("scores: {scores:?}");

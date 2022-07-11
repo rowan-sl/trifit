@@ -1,40 +1,83 @@
-pub mod vec2;
-pub mod utils;
+#[macro_use]
+extern crate log;
 
-use std::{time::Instant, cmp::Ordering};
+pub mod colors;
+pub mod utils;
+pub mod vec2;
+
+use std::{
+    cmp,
+    path::PathBuf,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
+    thread,
+    time::Instant, fs::OpenOptions, io::Write,
+};
 
 use anyhow::Result;
-use image::{Rgb, RgbImage, RgbaImage, DynamicImage};
-use macroquad::prelude::*;
+use clap::{ArgGroup, Parser, ValueEnum};
+use glutin_window::GlutinWindow;
+use graphics::line;
+use image::{DynamicImage, GenericImage, Rgb, RgbImage, RgbaImage};
+use opengl_graphics::{GlGraphics, OpenGL, Texture, TextureSettings};
+use piston::{
+    event_loop::{EventSettings, Events},
+    window::WindowSettings,
+    RenderEvent, Size, UpdateEvent,
+};
 
+use colors::*;
+use rand::Rng;
+use utils::{average, get_color_in_triangle, rectangle_by_points, score, score_for_group};
 use vec2::F64x2;
-use utils::{get_color_in_triangle, score, score_for_group, average};
 
-/// Notes on formatting
-///
-/// cords into an image are stored as f64, with a constant range of 0.0-1000.0 (mapped to image)
-///
-const _A: () = ();
+#[derive(Debug, Clone, Parser)]
+#[clap(author, version, about, long_about = None)]
+#[clap(group(
+            ArgGroup::new("out")
+                .required(false)
+                .args(&["output"])
+                .requires("format"),
+        ))]
+pub struct Args {
+    file: PathBuf,
 
-// size of the image to render
-const IMAGE_SIZE: u32 = 900;
-// size of triangles
-const TRI_SIZE: f64 = 5.0;
-// iterations to perform
-const ITERATIONS: i32 = 100;
-// filepath of the input image
-// const IMAGE_NAME: &str = "img/gandalf.gif";
-// const FORMAT: InputFormat = InputFormat::Gif;
-// const IMAGE_NAME: &str = "img/ted-hiking-002.jpg";
-// const IMAGE_NAME: &str = "img/wild_potatoes.jpeg";
-// const IMAGE_NAME: &str = "img/aroura_sky.jpg";
-const IMAGE_NAME: &str = "img/fire.jpg";
-// format, Image or Gif. for Gifs, it will take the first frame of the gif
-const FORMAT: InputFormat = InputFormat::Image;
-// chance that it will pick the new option, even if it is worse
-const RANDOM_CHANCE_QTY: usize = 30;
-// ammount to move each point by each time
-const SHIFT_AMNT: f64 = 0.5;
+    #[clap(long, help = "size of image to render")]
+    image_size: u32,
+
+    #[clap(long, help = "size of each triangle")]
+    tri_size: f64,
+
+    #[clap(long, help = "num of iterations to perform")]
+    iterations: usize,
+
+    #[clap(long, help = "ammount to move each vertex each iteration")]
+    shift: f64,
+
+    #[clap(
+        long,
+        help = "chance that a new option will be chosen even if it is worse",
+        default_value = "0"
+    )]
+    randomness: usize,
+
+    output: Option<PathBuf>,
+
+    #[clap(long, action)]
+    no_visuals: bool,
+
+    #[clap(long, short, arg_enum, value_parser)]
+    format: Option<OutputFormat>,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum OutputFormat {
+    Svg,
+    Image,
+    Mindustry,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InputFormat {
@@ -42,140 +85,348 @@ pub enum InputFormat {
     Image,
 }
 
-#[macroquad::main("trifit - test")]
+#[tokio::main]
 async fn main() -> Result<()> {
-    clear_background(BLACK);
-    let mut input_image;
-    match FORMAT {
-        InputFormat::Gif => {
-            use std::fs::File;
-            let mut decoder = gif::DecodeOptions::new();
-            // Configure the decoder such that it will expand the image to RGBA.
-            decoder.set_color_output(gif::ColorOutput::RGBA);
-            // Read the file header
-            let file = File::open("gandalf.gif").unwrap();
-            let mut decoder = decoder.read_info(file).unwrap();
-            let first_frame = decoder.read_next_frame().unwrap().unwrap();
-            let img = RgbaImage::from_raw(first_frame.width as u32, first_frame.height as u32, first_frame.buffer.to_vec()).unwrap();
-            input_image = DynamicImage::ImageRgba8(img).to_rgb8();
-        }
-        InputFormat::Image => {
-            input_image = image::open(IMAGE_NAME)?.to_rgb8();
-        }
-    }
-    enum Axis { X, Y }
-    let current_axis: (u32, u32) = (input_image.width(), input_image.height());
-    let larger = match current_axis.0.cmp(&current_axis.1) {
-        Ordering::Greater => Axis::X,
-        Ordering::Equal => Axis::X,
-        Ordering::Less => Axis::Y
-    };
-    match larger {
-        Axis::X => {
-            let factor = IMAGE_SIZE as f64 / current_axis.0 as f64;
-            let new_height = (factor * current_axis.1 as f64) as u32;
-            println!("Original: {current_axis:?}, new: ({IMAGE_SIZE}, {new_height})");
-            input_image = image::imageops::resize(&input_image, IMAGE_SIZE, new_height, image::imageops::Lanczos3);
-            // input_image = RgbImage::from_pixel(IMAGE_SIZE, IMAGE_SIZE, Rgb([0; 3]));
-            // input_image.copy_from(&scaled, 0, (IMAGE_SIZE - new_height) / 2).unwrap();
-        }
-        Axis::Y => {
-            let factor = IMAGE_SIZE as f64 / current_axis.1 as f64;
-            let new_width = (factor * current_axis.0 as f64) as u32;
-            println!("Original: {current_axis:?}, new: ({new_width}, {IMAGE_SIZE})");
-            input_image = image::imageops::resize(&input_image, new_width, IMAGE_SIZE, image::imageops::Lanczos3);
-            // input_image = RgbImage::from_pixel(IMAGE_SIZE, IMAGE_SIZE, Rgb([0; 3]));
-            // input_image.copy_from(&scaled, (IMAGE_SIZE - new_width) / 2, 0).unwrap();
-        }
-    }
+    let args = Args::parse();
 
-    let mut image = Image::gen_image_color(
-        input_image.width() as u16,
-        input_image.height() as u16,
-        WHITE,
+    pretty_env_logger::formatted_builder()
+        .filter_level(log::LevelFilter::Trace)
+        .init();
+
+    info!("Initialized");
+
+    // Change this to OpenGL::V2_1 if not working.
+    let opengl = OpenGL::V4_5;
+
+    // Create an Glutin window.
+    let mut window: GlutinWindow = WindowSettings::new("limeon", [200, 200])
+        .graphics_api(opengl)
+        .size(Size {
+            width: 1_000.0,
+            height: 700.0,
+        })
+        .vsync(true)
+        .controllers(true)
+        .build()
+        .unwrap();
+
+    let mut gl = GlGraphics::new(opengl);
+
+    let mut events = Events::new({
+        let mut es = EventSettings::new();
+        es.lazy = false;
+        es.ups_reset = 20;
+        es.ups = 10;
+        es
+    });
+
+    let unscaled = load_image(&args);
+    let (w, h, raw_image, padded_image) = scale_image(unscaled, &args);
+    let bg_texture = Texture::from_image(
+        &DynamicImage::ImageRgb8(padded_image).to_rgba8(),
+        &TextureSettings::new(),
     );
-    for (x, y, pxl) in input_image.enumerate_pixels() {
-        image.set_pixel(x, y, Color::from_rgba(pxl.0[0], pxl.0[1], pxl.0[2], 255));
-    }
-    let bg = Texture2D::from_image(&image);
 
-    // let (_, _, buffer) = generate_regular_points(IMAGE_SIZE, IMAGE_SIZE, 50.0);
-    // let buffer = buffer.into_iter().flatten().collect::<Vec<_>>();
-    let mut tris = Triangles::new(image.width() as u32, image.height() as u32, TRI_SIZE);
+    let original_tris = Triangles::new(
+        w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
+        h + (args.tri_size - h as f64 % args.tri_size.ceil()) as u32,
+        args.tri_size,
+    );
+    let mut recvd_tris = original_tris.clone();
+    let mut recvd_iteration = 0usize;
 
+    let proc_thread_comm = flume::bounded::<(usize, Triangles)>(2);
+    let proc_thread_kill = Arc::new(AtomicBool::new(false));
+    let proc_thread_kill2 = proc_thread_kill.clone();
 
-    let mut i = 0;
-    loop {
-        let starttime0 = Instant::now();
-        if i < ITERATIONS {
+    let raw_image2 = raw_image.clone();
+    let args2 = args.clone();
+    let mut proc_thread = Some(thread::spawn(move || {
+        let image = raw_image2;
+        let args = args2;
+        let mut tris = original_tris;
+        let mut iteration: usize = 0;
+
+        'main: loop {
+            let starttime = Instant::now();
             for (x, y, _) in tris.clone().into_iter_verts() {
-                optimize_one(&input_image, &mut tris, (x, y));
+                optimize_one(&image, &mut tris, (x, y), args.shift, args.randomness);
+                if proc_thread_kill2.load(atomic::Ordering::Relaxed) {
+                    break 'main;
+                }
             }
-            i += 1;
+            iteration += 1;
+            let endtime = Instant::now();
+            let opt_dur = endtime - starttime;
+            proc_thread_comm
+                .0
+                .send((iteration, tris.clone()))
+                .expect("Processing thread exiting -- main thread panic detected");
+            println!("Optimizer step");
+            println!("    iteration #{iteration}");
+            println!("    took {opt_dur:?}");
+            if iteration >= args.iterations {
+                break;
+            }
         }
-        let endtime0 = Instant::now();
-        let opt_dur = endtime0 - starttime0;
-        let starttime = Instant::now();
-        draw_texture(bg, 40.0, 40.0, WHITE);
-        // for (s_x, s_y, vert) in tris.clone().into_iter_verts() {
-        //     let color = if tris.vert_is_edge(s_x, s_y) {
-        //         RED
-        //     } else {
-        //         if s_y % 2 == 1 {
-        //             GREEN
-        //         } else {
-        //             BLUE
-        //         }
-        //     };
-        //     draw_circle(vert.x as f32 + 40.0, vert.y as f32 + 40.0, 5.0, color);
-        // }
+    }));
 
-        for (x, y, _) in tris.clone().into_iter_verts() {
-            tris.triangles_around_point(x, y)
-                .into_iter()
-                .for_each(|mut t| {
-                    let colors = get_color_in_triangle(&input_image, t);
+    while let Some(e) = events.next(&mut window) {
+        if let Some(render_args) = e.render_args() {
+            use graphics::clear;
 
-                    // let avg = average(&colors);
-                    // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
+            gl.draw(render_args.viewport(), |c, gl| {
+                clear(rgba(0, 0, 0, 1.0), gl);
+                graphics::Image::new()
+                    .rect(rectangle_by_points(
+                        F64x2::splat(40.0),
+                        F64x2::splat(40.0) + F64x2::splat(args.image_size as f64),
+                    ))
+                    .draw(
+                        &bg_texture,
+                        &graphics::DrawState::default(),
+                        c.transform,
+                        gl,
+                    );
 
-                    let score = score(&colors);
-                    assert!(0.0 <= score && score <= 255.0);
-                    // println!("Score: {}", score as u8);
-                    t = t.offset(40.0, 40.0);
-                    if i < ITERATIONS {
-                        let color = Color::from_rgba((score as u8).saturating_mul(3), 0, 0, 255);
-                        t.draw_outline(3.0, color);
-                    } else {
-                        let Rgb([r, g, b]) = average(&colors);
-                        let color = Color::from_rgba(r, g, b, 255);
-                        t.draw(color);
+                for (x, y, _) in recvd_tris.clone().into_iter_verts() {
+                    recvd_tris
+                        .triangles_around_point(x, y)
+                        .into_iter()
+                        .for_each(|mut t| {
+                            let colors = get_color_in_triangle(&raw_image, t);
+
+                            // let avg = average(&colors);
+                            // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
+
+                            let score = score(&colors);
+                            assert!(0.0 <= score && score <= 255.0);
+                            // println!("Score: {}", score as u8);
+                            t = t.offset(40.0, 40.0);
+                            t = t.offset(
+                                (args.image_size - w) as f64 / 2.0,
+                                (args.image_size - h) as f64 / 2.0,
+                            );
+                            if recvd_iteration < args.iterations {
+                                let color = rgba((score as u8).saturating_mul(3), 0, 0, 1.0);
+                                // let color = RED;
+                                t.draw_outline(2.0, color, &c, gl);
+                            } else {
+                                let Rgb([r, g, b]) = average(&colors);
+                                let color = rgba(r, g, b, 1.0);
+                                t.draw(color, &c, gl);
+                            }
+                        });
+                }
+            });
+        }
+
+        if let Some(_u_args) = e.update_args() {
+            match proc_thread_comm.1.try_recv() {
+                Ok(values) => {
+                    (recvd_iteration, recvd_tris) = values;
+                }
+                Err(flume::TryRecvError::Empty) => {}
+                Err(flume::TryRecvError::Disconnected) => {
+                    if let Some(proc_thread) = proc_thread.take() {
+                        println!("Procesing thread exiting");
+                        match proc_thread.join() {
+                            Ok(..) => {}
+                            Err(err) => std::panic::panic_any(err),
+                        }
+                        save(&recvd_tris, &raw_image, &args);
                     }
-                });
+                }
             }
-
-        // test of get_rel:
-        // draw_circle(tris.get_vert(7, 7).x as f32 + 40.0, tris.get_vert(7, 7).y as f32 + 40.0, 5.0, PURPLE);
-        // let draw = |pos| {
-        //     let vert = tris.get_rel(7, 7, pos);
-        //     draw_circle(vert.x as f32 + 40.0, vert.y as f32 + 40.0, 5.0, PINK);
-        // };
-        // draw(RelVertPos::UpRight);
-        let endtime = Instant::now();
-        println!("Frame:");
-        if i < ITERATIONS {
-            println!("    optimizer iteration {}", i);
-            println!("    optimization took {:?}", opt_dur);
-        } else {
-            println!("    optimization done!");
         }
-        println!("    visualization drawing took {:?}", endtime-starttime);
-        next_frame().await;
     }
-    // Ok(())
+
+    proc_thread_kill.store(true, atomic::Ordering::Relaxed);
+    loop {
+        let _ = proc_thread_comm.1.try_recv();
+        if let Some(proc_thread) = proc_thread.as_ref() {
+            if proc_thread.is_finished() {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    Ok(())
 }
 
-pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32)) {
+pub fn save(tris: &Triangles, image: &RgbImage, args: &Args) {
+    if let Some(out_file) = args.output.clone() {
+        match args.format.as_ref().unwrap() {
+            OutputFormat::Svg => {
+                let svg = make_svg(tris, image, args);
+                OpenOptions::new().create(true).write(true).truncate(true).open(&out_file).unwrap().write_all(svg.as_bytes()).unwrap();
+            }
+            OutputFormat::Image => {
+                let svg = make_svg(tris, image, args);// lies and deceit! (its svgs all the way down)
+                let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
+                let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
+                let pixmap = tiny_skia::PixmapMut::from_bytes(bytes.as_mut_slice(), image.width(), image.height()).unwrap();
+                resvg::render(&tree, usvg::FitTo::Original, tiny_skia::Transform::default(), pixmap);
+                let image = RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap();
+                image.save(&out_file).unwrap();
+            }
+            OutputFormat::Mindustry => {
+                todo!()
+            }
+        }
+        println!("Saved to {out_file:?}");
+    }
+}
+
+pub fn make_svg(tris: &Triangles, image: &RgbImage, args: &Args) -> String {
+    use svg::{node::element::Polygon, Document};
+
+    let nodes = tris
+        .clone()
+        .into_iter_verts()
+        .map(|v| [(true, v), (false, v)])
+        .flatten()
+        .map::<Option<Polygon>, _>(|(flipflop, (rx, ry, tri))| {
+            let (rx1, ry1): (u32, u32);
+            let (rx2, ry2): (u32, u32);
+            if flipflop {
+                (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
+                (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownLeft)?;
+            } else {
+                (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::Right)?;
+                (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
+            }
+            let verts = (
+                tri,
+                *tris.get_vert(rx1, ry1),
+                *tris.get_vert(rx2, ry2),
+            );
+            let colors = average(&get_color_in_triangle(
+                image,
+                Triangle(verts.0, verts.1, verts.2),
+            ));
+            Some(
+                Polygon::new()
+                    .set(
+                        "fill",
+                        format!("rgb({}, {}, {})", colors.0[0], colors.0[1], colors.0[2]),
+                    )
+                    .set(
+                        "stroke",
+                        format!("rgb({}, {}, {})", colors.0[0], colors.0[1], colors.0[2]),
+                    )
+                    .set(
+                        "points",
+                        format!(
+                            "{},{} {},{} {},{}",
+                            verts.0.x, verts.0.y, verts.1.x, verts.1.y, verts.2.x, verts.2.y
+                        ),
+                    ),
+            )
+        });
+    let mut doc = Document::new().set("viewBox", (0, 0, args.image_size, args.image_size));
+    for node in nodes {
+        if let Some(node) = node {
+            doc = doc.add(node);
+        }
+    }
+    doc.to_string()
+}
+
+pub fn load_image(args: &Args) -> RgbImage {
+    let path = args.file.canonicalize().expect("invalid path!");
+    assert!(path.exists(), "input file must exist!");
+    // let extension = path.extension().expect("File does not have an extension").to_str().expect("File extension must be valid UTF-8");
+    let gif_decoder = {
+        use std::fs::File;
+        let mut decoder = gif::DecodeOptions::new();
+        // Configure the decoder such that it will expand the image to RGBA.
+        decoder.set_color_output(gif::ColorOutput::RGBA);
+        // Read the file header
+        let file = File::open(&path).expect("Cannot open input file!");
+        decoder.read_info(file)
+    };
+
+    let image_decoder = (|| {
+        let dyn_img = image::open(path)?;
+        Ok::<_, image::ImageError>(dyn_img.to_rgb8())
+    })();
+
+    match (gif_decoder, image_decoder) {
+        (Ok(..), Ok(..)) => unreachable!("Input cannot be an image and a gif!"),
+        (Ok(mut gif_decoder), Err(..)) => {
+            let first_frame = gif_decoder.read_next_frame().unwrap().unwrap();
+            let img = RgbaImage::from_raw(
+                first_frame.width as u32,
+                first_frame.height as u32,
+                first_frame.buffer.to_vec(),
+            )
+            .unwrap();
+            DynamicImage::ImageRgba8(img).to_rgb8()
+        }
+        (Err(..), Ok(image)) => image,
+        (Err(..), Err(..)) => panic!("Input is not a gif or an image"),
+    }
+}
+
+fn scale_image(unscaled: RgbImage, args: &Args) -> (u32, u32, RgbImage, RgbImage) {
+    enum Axis {
+        X,
+        Y,
+    }
+    let current_axis: (u32, u32) = (unscaled.width(), unscaled.height());
+    let larger = match current_axis.0.cmp(&current_axis.1) {
+        cmp::Ordering::Greater => Axis::X,
+        cmp::Ordering::Equal => Axis::X,
+        cmp::Ordering::Less => Axis::Y,
+    };
+
+    let image_size = args.image_size;
+
+    match larger {
+        Axis::X => {
+            let factor = image_size as f64 / current_axis.0 as f64;
+            let new_height = (factor * current_axis.1 as f64) as u32;
+            println!("Original: {current_axis:?}, new: ({image_size}, {new_height})");
+            let scaled = image::imageops::resize(
+                &unscaled,
+                image_size,
+                new_height,
+                image::imageops::Lanczos3,
+            );
+            let mut final_image = RgbImage::from_pixel(image_size, image_size, Rgb([0; 3]));
+            final_image
+                .copy_from(&scaled, 0, (image_size - new_height) / 2)
+                .unwrap();
+            (image_size, new_height, scaled, final_image)
+        }
+        Axis::Y => {
+            let factor = image_size as f64 / current_axis.1 as f64;
+            let new_width = (factor * current_axis.0 as f64) as u32;
+            println!("Original: {current_axis:?}, new: ({new_width}, {image_size})");
+            let scaled = image::imageops::resize(
+                &unscaled,
+                new_width,
+                image_size,
+                image::imageops::Lanczos3,
+            );
+            let mut final_image = RgbImage::from_pixel(image_size, image_size, Rgb([0; 3]));
+            final_image
+                .copy_from(&scaled, (image_size - new_width) / 2, 0)
+                .unwrap();
+            (new_width, image_size, scaled, final_image)
+        }
+    }
+}
+
+pub fn optimize_one(
+    image: &RgbImage,
+    tris: &mut Triangles,
+    xy: (u32, u32),
+    shift_amnt: f64,
+    randomness: usize,
+) {
     // println!("e");
     if tris.vert_is_edge(xy.0, xy.1) {
         // println!("edge");
@@ -187,16 +438,18 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32)) {
     // println!("    Original score: {original_score}");
 
     let perms = [
-        (0, 1),//   up
-        (1, 1),//   up right
-        (1, 0),//   right
-        (1, -1),//  down right
-        (0, -1),//  down
-        (-1, -1),// down left
-        (-1, 0),//  left
-        (-1, 1),//  up left
-    ].map(|(x, y)| (x as f64 * SHIFT_AMNT, y as f64 * SHIFT_AMNT));
-    let (dx, dy, best_score) = perms.into_iter()
+        (0, 1),   //   up
+        (1, 1),   //   up right
+        (1, 0),   //   right
+        (1, -1),  //  down right
+        (0, -1),  //  down
+        (-1, -1), // down left
+        (-1, 0),  //  left
+        (-1, 1),  //  up left
+    ]
+    .map(|(x, y)| (x as f64 * shift_amnt, y as f64 * shift_amnt));
+    let (dx, dy, best_score) = perms
+        .into_iter()
         .map(|(dx, dy)| {
             let original = *tris.get_vert(xy.0, xy.1);
             let at = tris.get_vert_mut(xy.0, xy.1);
@@ -208,9 +461,16 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32)) {
             *tris.get_vert_mut(xy.0, xy.1) = original;
             (dx, dy, new_score)
         })
-        .min_by(|(_, _, a), (_, _, b)| a.partial_cmp(b).unwrap()).unwrap();
+        .min_by(|(_, _, a), (_, _, b)| a.partial_cmp(b).unwrap())
+        .unwrap();
 
-    if best_score < original_score || rand::gen_range(0, RANDOM_CHANCE_QTY) == 1 {
+    if best_score < original_score
+        || if randomness != 0 {
+            rand::thread_rng().gen_range(0..randomness) == 1
+        } else {
+            false
+        }
+    {
         // println!("yay");
         let at = tris.get_vert_mut(xy.0, xy.1);
         at.x += dx;
@@ -399,28 +659,61 @@ impl Triangle {
         self
     }
 
-    pub fn draw_outline(&self, thickness: f32, color: Color) {
-        draw_triangle_lines(
-            self.0.into(),
-            self.1.into(),
-            self.2.into(),
+    pub fn draw_outline(
+        &self,
+        thickness: f64,
+        color: Color,
+        c: &graphics::Context,
+        gl: &mut GlGraphics,
+    ) {
+        line(
+            color,
             thickness,
+            [self.0.x, self.0.y, self.1.x, self.1.y],
+            c.transform,
+            gl,
+        );
+        line(
             color,
-        )
+            thickness,
+            [self.1.x, self.1.y, self.2.x, self.2.y],
+            c.transform,
+            gl,
+        );
+        line(
+            color,
+            thickness,
+            [self.2.x, self.2.y, self.0.x, self.0.y],
+            c.transform,
+            gl,
+        );
+
+        // draw_triangle_lines(
+        //     self.0.into(),
+        //     self.1.into(),
+        //     self.2.into(),
+        //     thickness,
+        //     color,
+        // )
     }
 
-    pub fn draw(&self, color: Color) {
-        draw_triangle(
-            self.0.into(),
-            self.1.into(),
-            self.2.into(),
-            color,
-        )
-    }
-}
-
-impl Into<Vec2> for F64x2 {
-    fn into(self) -> Vec2 {
-        Vec2::new(self.x as f32, self.y as f32)
+    pub fn draw(&self, color: Color, c: &graphics::Context, gl: &mut GlGraphics) {
+        use graphics::{DrawState, Polygon};
+        Polygon::new(color).draw(
+            &[
+                [self.0.x, self.0.y],
+                [self.1.x, self.1.y],
+                [self.2.x, self.2.y],
+            ][..],
+            &DrawState::default(),
+            c.transform,
+            gl,
+        );
+        // draw_triangle(
+        //     self.0.into(),
+        //     self.1.into(),
+        //     self.2.into(),
+        //     color,
+        // )
     }
 }
