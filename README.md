@@ -10,7 +10,7 @@ and give you beautefull triangle versions
 <img src="./doc/assets/out/aroura_sky.png" width="400">
 <img src="./doc/assets/out/fire.png" width="400">
 
-ad finally, it can create mindustry logic to display the images it creates in game! **(coming soon)**
+and finally, it can create mindustry logic to display the images it creates in game! **(coming soon)**
 
 ## Usage
 
