@@ -6,22 +6,22 @@ pub fn rectangle_by_points(c0: F64x2, c1: F64x2) -> [f64; 4] {
     graphics::rectangle::rectangle_by_corners(c0.x, c0.y, c1.x, c1.y)
 }
 
-pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8>> {
+pub fn point_in_triangle(pt: F64x2, v1: F64x2, v2: F64x2, v3: F64x2) -> bool {
     fn sign(p1: F64x2, p2: F64x2, p3: F64x2) -> f64 {
         return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
     }
 
-    fn point_in_triangle(pt: F64x2, v1: F64x2, v2: F64x2, v3: F64x2) -> bool {
-        let d1 = sign(pt, v1, v2);
-        let d2 = sign(pt, v2, v3);
-        let d3 = sign(pt, v3, v1);
+    let d1 = sign(pt, v1, v2);
+    let d2 = sign(pt, v2, v3);
+    let d3 = sign(pt, v3, v1);
 
-        let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
-        let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+    let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+    let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
 
-        !(has_neg && has_pos)
-    }
+    !(has_neg && has_pos)
+}
 
+pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8>> {
     fn min(a: f64, b: f64) -> f64 {
         if a < b {
             a
@@ -94,29 +94,65 @@ pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
     ])
 }
 
-pub fn score(colors: &Vec<Rgb<u8>>) -> f64 {
+pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
+    let w = image.width() + (args.tri_size - image.width() as f64 % args.tri_size.ceil()) as u32;
+    let h = image.height() + (args.tri_size - image.height() as f64 % args.tri_size.ceil()) as u32;
+    let appt = (image.width() * image.height())
+        / ((w as f64 / args.tri_size) * (h as f64 / args.tri_size)) as u32;
+
+    fn max(a: f64, b: f64) -> f64 {
+        if a > b {
+            a
+        } else {
+            b
+        }
+    }
+
     let avg = average(colors);
-    let deviations: Vec<f64> = colors
+    let mut deviations: Vec<f64> = colors
         .iter()
         .map(|c| {
-            ((avg.0[0] as f64 - c.0[0] as f64).abs()
-                + (avg.0[1] as f64 - c.0[1] as f64).abs()
-                + (avg.0[2] as f64 - c.0[2] as f64).abs())
-                / 3.0
+            max(
+                max(
+                    (avg.0[0] as f64 - c.0[0] as f64).abs(),
+                    (avg.0[1] as f64 - c.0[1] as f64).abs(),
+                ),
+                (avg.0[2] as f64 - c.0[2] as f64).abs(),
+            )
         })
         .collect();
-    let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
-    if r.is_nan() {
-        0.0
-    } else {
-        r
+    deviations.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    let base = deviations
+        .get(cmp::min(
+            appt as usize / 20, // 5%
+            deviations.len().saturating_sub(1),
+        ))
+        .copied()
+        .unwrap_or(0.0);
+    // let size_score = (deviations.len() - std::cmp::min(appt as usize / 20 /* 5% */, deviations.len())) as f64 * 1.0 /* weight value */;
+    // let size_score = if (appt as f64 * 0.03) as usize > deviations.len() {
+    //     (appt as f64 * 0.03) as usize - deviations.len()
+    // } else { 0 } as f64;
+    // let size_score = 1.0 / (((cmp::min(deviations.len() as u32 + 1, (appt as f64 / 1.0) as u32) as f64 * 10.0)
+    // / (appt as f64 / 1.0)) * 2.0);
+    let size_score = ((appt as f64 / (deviations.len() as f64 + 1.0)) / appt as f64) * 255.0;
+    // println!("{}", size_score);
+    if base + size_score > 255.0 * 3.0 {
+        println!("{base} {size_score} {} {}", deviations.len(), appt);
     }
+    base + size_score
+    //     let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
+    //     if r.is_nan() {
+    //         0.0
+    //     } else {
+    //         r
+    //     }
 }
 
-pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>) -> f64 {
+pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>, args: &Args) -> f64 {
     let scores: Vec<f64> = group
         .iter()
-        .map(|t| score(&get_color_in_triangle(image, *t)))
+        .map(|t| score(&get_color_in_triangle(image, *t), image, args))
         .collect();
     // println!("scores: {scores:?}");
     let r = scores.iter().sum::<f64>() / scores.len() as f64;

@@ -7,13 +7,15 @@ pub mod vec2;
 
 use std::{
     cmp,
+    fs::OpenOptions,
+    io::Write,
     path::PathBuf,
     sync::{
         atomic::{self, AtomicBool},
         Arc,
     },
     thread,
-    time::Instant, fs::OpenOptions, io::Write,
+    time::Instant,
 };
 
 use anyhow::Result;
@@ -29,8 +31,10 @@ use piston::{
 };
 
 use colors::*;
-use rand::Rng;
-use utils::{average, get_color_in_triangle, rectangle_by_points, score, score_for_group};
+use rand::{prelude::SliceRandom, Rng};
+use utils::{
+    average, get_color_in_triangle, point_in_triangle, rectangle_by_points, score, score_for_group,
+};
 use vec2::F64x2;
 
 #[derive(Debug, Clone, Parser)]
@@ -149,8 +153,11 @@ async fn main() -> Result<()> {
 
         'main: loop {
             let starttime = Instant::now();
-            for (x, y, _) in tris.clone().into_iter_verts() {
-                optimize_one(&image, &mut tris, (x, y), args.shift, args.randomness);
+
+            let mut verts = tris.clone().into_iter_verts().collect::<Vec<_>>();
+            verts.shuffle(&mut rand::thread_rng());
+            for (x, y, _) in verts {
+                optimize_one(&image, &mut tris, (x, y), &args);
                 if proc_thread_kill2.load(atomic::Ordering::Relaxed) {
                     break 'main;
                 }
@@ -199,8 +206,11 @@ async fn main() -> Result<()> {
                             // let avg = average(&colors);
                             // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
 
-                            let score = score(&colors);
-                            assert!(0.0 <= score && score <= 255.0);
+                            let score = score(&colors, &raw_image, &args);
+                            assert!(
+                                0.0 <= score && score <= 255.0 * 3.0,
+                                "Score was too large/small! (score: {score})"
+                            );
                             // println!("Score: {}", score as u8);
                             t = t.offset(40.0, 40.0);
                             t = t.offset(
@@ -208,12 +218,33 @@ async fn main() -> Result<()> {
                                 (args.image_size - h) as f64 / 2.0,
                             );
                             if recvd_iteration < args.iterations {
-                                let color = rgba((score as u8).saturating_mul(3), 0, 0, 1.0);
+                                let color = rgba(
+                                    // cmp::min(score as u64, 255) as u8,
+                                    // cmp::min(score as u64, 255 * 2).saturating_sub(255) as u8,
+                                    // cmp::min(score as u64, 255 * 3).saturating_sub(255 * 2) as u8,
+                                    if score <= 255.0 { score as u8 } else { 0 },
+                                    if score <= 255.0 * 2.0 && score > 255.0 {
+                                        (score - 255.0) as u8
+                                    } else {
+                                        0
+                                    },
+                                    if score <= 255.0 * 3.0 && score > 255.0 * 2.0 {
+                                        (score - 255.0 * 2.0) as u8
+                                    } else {
+                                        0
+                                    },
+                                    1.0,
+                                );
                                 // let color = RED;
                                 t.draw_outline(2.0, color, &c, gl);
                             } else {
-                                let Rgb([r, g, b]) = average(&colors);
-                                let color = rgba(r, g, b, 1.0);
+                                let color;
+                                if colors.is_empty() {
+                                    color = rgba(0, 0, 0, 0.0);
+                                } else {
+                                    let Rgb([r, g, b]) = average(&colors);
+                                    color = rgba(r, g, b, 1.0);
+                                }
                                 t.draw(color, &c, gl);
                             }
                         });
@@ -260,14 +291,31 @@ pub fn save(tris: &Triangles, image: &RgbImage, args: &Args) {
         match args.format.as_ref().unwrap() {
             OutputFormat::Svg => {
                 let svg = make_svg(tris, image, args);
-                OpenOptions::new().create(true).write(true).truncate(true).open(&out_file).unwrap().write_all(svg.as_bytes()).unwrap();
+                OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&out_file)
+                    .unwrap()
+                    .write_all(svg.as_bytes())
+                    .unwrap();
             }
             OutputFormat::Image => {
-                let svg = make_svg(tris, image, args);// lies and deceit! (its svgs all the way down)
+                let svg = make_svg(tris, image, args); // lies and deceit! (its svgs all the way down)
                 let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
                 let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
-                let pixmap = tiny_skia::PixmapMut::from_bytes(bytes.as_mut_slice(), image.width(), image.height()).unwrap();
-                resvg::render(&tree, usvg::FitTo::Original, tiny_skia::Transform::default(), pixmap);
+                let pixmap = tiny_skia::PixmapMut::from_bytes(
+                    bytes.as_mut_slice(),
+                    image.width(),
+                    image.height(),
+                )
+                .unwrap();
+                resvg::render(
+                    &tree,
+                    usvg::FitTo::Original,
+                    tiny_skia::Transform::default(),
+                    pixmap,
+                );
                 let image = RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap();
                 image.save(&out_file).unwrap();
             }
@@ -297,11 +345,7 @@ pub fn make_svg(tris: &Triangles, image: &RgbImage, args: &Args) -> String {
                 (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::Right)?;
                 (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
             }
-            let verts = (
-                tri,
-                *tris.get_vert(rx1, ry1),
-                *tris.get_vert(rx2, ry2),
-            );
+            let verts = (tri, *tris.get_vert(rx1, ry1), *tris.get_vert(rx2, ry2));
             let colors = average(&get_color_in_triangle(
                 image,
                 Triangle(verts.0, verts.1, verts.2),
@@ -420,53 +464,75 @@ fn scale_image(unscaled: RgbImage, args: &Args) -> (u32, u32, RgbImage, RgbImage
     }
 }
 
-pub fn optimize_one(
-    image: &RgbImage,
-    tris: &mut Triangles,
-    xy: (u32, u32),
-    shift_amnt: f64,
-    randomness: usize,
-) {
+pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args: &Args) {
+    let shift_amnt = args.shift;
+    let randomness = args.randomness;
     // println!("e");
     if tris.vert_is_edge(xy.0, xy.1) {
         // println!("edge");
         return;
     }
     let group = tris.triangles_around_point(xy.0, xy.1);
-    let original_score = score_for_group(image, &group);
+    let original_score = score_for_group(image, &group, args);
     // println!("Opt: ");
     // println!("    Original score: {original_score}");
 
     let perms = [
-        (0, 1),   //   up
-        (1, 1),   //   up right
-        (1, 0),   //   right
-        (1, -1),  //  down right
-        (0, -1),  //  down
-        (-1, -1), // down left
-        (-1, 0),  //  left
-        (-1, 1),  //  up left
+        (0.0, 1.0), //   up
+        (0.5, 1.0),
+        (1.0, 1.0), //   up right
+        (1.0, 0.5),
+        (1.0, 0.0), //   right
+        (1.0, -0.5),
+        (1.0, -1.0), //  down right
+        (0.5, -1.0),
+        (0.0, -1.0), //  down
+        (-0.5, -1.0),
+        (-1.0, -1.0), // down left
+        (-1.0, -0.5),
+        (-1.0, 0.0), //  left
+        (-1.0, 0.5),
+        (-1.0, 1.0), //  up left
+        (-0.5, 1.0),
     ]
-    .map(|(x, y)| (x as f64 * shift_amnt, y as f64 * shift_amnt));
+    .into_iter()
+    .map(|(x, y)| (x * shift_amnt, y * shift_amnt))
+    .map(|(x, y)| {
+        (1..=4)
+            .map(|i| (x * i as f64, y * i as f64))
+            .collect::<Vec<_>>()
+    })
+    .flatten();
+
+    let tris2 = tris.clone();
+
     let (dx, dy, best_score) = perms
         .into_iter()
+        .filter(|(dx, dy)| {
+            let new = *tris2.get_vert(xy.0, xy.1) + F64x2::new(*dx, *dy);
+            tris2
+                .triangles_around_point(xy.0, xy.1)
+                .into_iter()
+                .map(|t| point_in_triangle(new, t.0, t.1, t.2))
+                .any(|x| x)
+        })
         .map(|(dx, dy)| {
             let original = *tris.get_vert(xy.0, xy.1);
             let at = tris.get_vert_mut(xy.0, xy.1);
             at.x += dx;
             at.y += dy;
             let group = tris.triangles_around_point(xy.0, xy.1);
-            let new_score = score_for_group(image, &group);
+            let new_score = score_for_group(image, &group, args);
             // println!("    possible new score: {new_score}");
             *tris.get_vert_mut(xy.0, xy.1) = original;
             (dx, dy, new_score)
         })
         .min_by(|(_, _, a), (_, _, b)| a.partial_cmp(b).unwrap())
-        .unwrap();
+        .unwrap_or((0f64, 0f64, 0f64));
 
     if best_score < original_score
         || if randomness != 0 {
-            rand::thread_rng().gen_range(0..randomness) == 1
+            rand::thread_rng().gen_bool(1.0 / randomness as f64)
         } else {
             false
         }
