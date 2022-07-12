@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Rowan S-L <r@fawkes.io>"]
 license = "MIT"
-license-file = "LICENSE"
 description = "Image compression and art generation with triangles!"
 homepage = "https://github.com/rowan-sl/trifit"
 repository = "https://github.com/rowan-sl/trifit"
