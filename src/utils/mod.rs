@@ -1,6 +1,9 @@
+use std::cmp;
+
+use image::{Rgb, RgbImage};
 use lazysort::SortedBy;
 
-use crate::*;
+use crate::{triangle::Triangle, vec2::F64x2, Args};
 
 pub fn rectangle_by_points(c0: F64x2, c1: F64x2) -> [f64; 4] {
     graphics::rectangle::rectangle_by_corners(c0.x, c0.y, c1.x, c1.y)
@@ -91,7 +94,13 @@ impl<'a> SubImageIterator<'a> {
         assert!(x + width <= img.width());
         assert!(y + height <= img.height());
         let done = width == 0 || height == 0;
-        SubImageIterator { image: img, xy: (x, y), wh: (width, height), current_xy: (0, 0), done }
+        SubImageIterator {
+            image: img,
+            xy: (x, y),
+            wh: (width, height),
+            current_xy: (0, 0),
+            done,
+        }
     }
 
     fn get(&self, x: u32, y: u32) -> Rgb<u8> {
@@ -167,7 +176,8 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
                 ),
                 (avg.0[2] as f64 - c.0[2] as f64).abs(),
             )
-        }).sorted_by(|a, b| b.total_cmp(a))
+        })
+        .sorted_by(|a, b| b.total_cmp(a))
         .nth(cmp::min(
             appt as usize / 20, // 5%
             colors.len().saturating_sub(1),
