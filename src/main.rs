@@ -416,12 +416,13 @@ pub fn load_image(args: &Args) -> RgbImage {
 
     let image_decoder = (|| {
         let dyn_img = image::open(path)?;
-        Ok::<_, image::ImageError>(dyn_img.to_rgb8())
+        let rgb = dyn_img.to_rgb8();
+        Ok::<_, image::ImageError>(rgb)
     })();
 
     match (gif_decoder, image_decoder) {
-        (Ok(..), Ok(..)) => unreachable!("Input cannot be an image and a gif!"),
-        (Ok(mut gif_decoder), Err(..)) => {
+        // (Ok(..), Ok(..)) => unreachable!("Input cannot be an image and a gif!"),
+        (Ok(mut gif_decoder), Err(..)) | (Ok(mut gif_decoder), Ok(..))  => {
             let first_frame = gif_decoder.read_next_frame().unwrap().unwrap();
             let img = RgbaImage::from_raw(
                 first_frame.width as u32,
@@ -501,21 +502,21 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
 
     let perms = [
         (0.0, 1.0), //   up
-        (0.5, 1.0),
+        // (0.5, 1.0),
         (1.0, 1.0), //   up right
-        (1.0, 0.5),
+        // (1.0, 0.5),
         (1.0, 0.0), //   right
-        (1.0, -0.5),
+        // (1.0, -0.5),
         (1.0, -1.0), //  down right
-        (0.5, -1.0),
+        // (0.5, -1.0),
         (0.0, -1.0), //  down
-        (-0.5, -1.0),
+        // (-0.5, -1.0),
         (-1.0, -1.0), // down left
-        (-1.0, -0.5),
+        // (-1.0, -0.5),
         (-1.0, 0.0), //  left
-        (-1.0, 0.5),
+        // (-1.0, 0.5),
         (-1.0, 1.0), //  up left
-        (-0.5, 1.0),
+        // (-0.5, 1.0),
     ]
     .into_iter()
     .map(|(x, y)| (x * shift_amnt, y * shift_amnt))
@@ -529,7 +530,6 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
     let tris2 = tris.clone();
 
     let (dx, dy, best_score) = perms
-        .into_iter()
         .filter(|(dx, dy)| {
             let new = *tris2.get_vert(xy.0, xy.1) + F64x2::new(*dx, *dy);
             tris2
