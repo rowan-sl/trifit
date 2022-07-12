@@ -1,4 +1,5 @@
 use image::GenericImageView;
+use lazysort::SortedBy;
 
 use crate::*;
 
@@ -109,7 +110,7 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
     }
 
     let avg = average(colors);
-    let mut deviations: Vec<f64> = colors
+    let base = colors
         .iter()
         .map(|c| {
             max(
@@ -119,15 +120,11 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
                 ),
                 (avg.0[2] as f64 - c.0[2] as f64).abs(),
             )
-        })
-        .collect();
-    deviations.sort_by(|a, b| b.total_cmp(a));
-    let base = deviations
-        .get(cmp::min(
+        }).sorted_by(|a, b| b.total_cmp(a))
+        .nth(cmp::min(
             appt as usize / 20, // 5%
-            deviations.len().saturating_sub(1),
+            colors.len().saturating_sub(1),
         ))
-        .copied()
         .unwrap_or(0.0);
     // let size_score = (deviations.len() - std::cmp::min(appt as usize / 20 /* 5% */, deviations.len())) as f64 * 1.0 /* weight value */;
     // let size_score = if (appt as f64 * 0.03) as usize > deviations.len() {
@@ -135,10 +132,10 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
     // } else { 0 } as f64;
     // let size_score = 1.0 / (((cmp::min(deviations.len() as u32 + 1, (appt as f64 / 1.0) as u32) as f64 * 10.0)
     // / (appt as f64 / 1.0)) * 2.0);
-    let size_score = ((appt as f64 / (deviations.len() as f64 + 1.0)) / appt as f64) * 255.0;
+    let size_score = ((appt as f64 / (colors.len() as f64 + 1.0)) / appt as f64) * 255.0;
     // println!("{}", size_score);
     if base + size_score > 255.0 * 3.0 {
-        println!("{base} {size_score} {} {}", deviations.len(), appt);
+        println!("{base} {size_score} {} {}", colors.len(), appt);
     }
     base + size_score
     //     let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
