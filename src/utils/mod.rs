@@ -121,7 +121,7 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
             )
         })
         .collect();
-    deviations.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    deviations.sort_by(|a, b| b.total_cmp(a));
     let base = deviations
         .get(cmp::min(
             appt as usize / 20, // 5%

@@ -35,10 +35,11 @@ resvg = "0.23.0"
 usvg = "0.23.0"
 tiny-skia = "0.6.6"# version used by usvg
 
-[profile.dev]
-opt-level = 2
+# [profile.dev]
+# opt-level = 2
 
 [profile.release]
-codegen-units = 1
-lto = true
+debug = true
+# codegen-units = 1
+# lto = true
 

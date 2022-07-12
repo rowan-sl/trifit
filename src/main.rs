@@ -99,37 +99,8 @@ async fn main() -> Result<()> {
 
     info!("Initialized");
 
-    // Change this to OpenGL::V2_1 if not working.
-    let opengl = OpenGL::V4_5;
-
-    // Create an Glutin window.
-    let mut window: GlutinWindow = WindowSettings::new("limeon", [200, 200])
-        .graphics_api(opengl)
-        .size(Size {
-            width: 1_000.0,
-            height: 700.0,
-        })
-        .vsync(true)
-        .controllers(true)
-        .build()
-        .unwrap();
-
-    let mut gl = GlGraphics::new(opengl);
-
-    let mut events = Events::new({
-        let mut es = EventSettings::new();
-        es.lazy = false;
-        es.ups_reset = 20;
-        es.ups = 10;
-        es
-    });
-
     let unscaled = load_image(&args);
     let (w, h, raw_image, padded_image) = scale_image(unscaled, &args);
-    let bg_texture = Texture::from_image(
-        &DynamicImage::ImageRgb8(padded_image).to_rgba8(),
-        &TextureSettings::new(),
-    );
 
     let original_tris = Triangles::new(
         w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
@@ -178,87 +149,137 @@ async fn main() -> Result<()> {
         }
     }));
 
-    while let Some(e) = events.next(&mut window) {
-        if let Some(render_args) = e.render_args() {
-            use graphics::clear;
+    if !args.no_visuals {
+        // Change this to OpenGL::V2_1 if not working.
+        let opengl = OpenGL::V4_5;
 
-            gl.draw(render_args.viewport(), |c, gl| {
-                clear(rgba(0, 0, 0, 1.0), gl);
-                graphics::Image::new()
-                    .rect(rectangle_by_points(
-                        F64x2::splat(40.0),
-                        F64x2::splat(40.0) + F64x2::splat(args.image_size as f64),
-                    ))
-                    .draw(
-                        &bg_texture,
-                        &graphics::DrawState::default(),
-                        c.transform,
-                        gl,
-                    );
+        // Create an Glutin window.
+        let mut window: GlutinWindow = WindowSettings::new("trifit", [10, 10])
+            .graphics_api(opengl)
+            .size(Size {
+                width: args.image_size as f64 + 80.0,
+                height: args.image_size as f64 + 80.0,
+            })
+            .resizable(false)
+            .vsync(true)
+            .build()
+            .unwrap();
 
-                for (x, y, _) in recvd_tris.clone().into_iter_verts() {
-                    recvd_tris
-                        .triangles_around_point(x, y)
-                        .into_iter()
-                        .for_each(|mut t| {
-                            let colors = get_color_in_triangle(&raw_image, t);
+        let mut gl = GlGraphics::new(opengl);
 
-                            // let avg = average(&colors);
-                            // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
+        let mut events = Events::new({
+            let mut es = EventSettings::new();
+            es.lazy = false;
+            es.ups_reset = 20;
+            es.ups = 10;
+            es
+        });
 
-                            let score = score(&colors, &raw_image, &args);
-                            assert!(
-                                0.0 <= score && score <= 255.0 * 3.0,
-                                "Score was too large/small! (score: {score})"
-                            );
-                            // println!("Score: {}", score as u8);
-                            t = t.offset(40.0, 40.0);
-                            t = t.offset(
-                                (args.image_size - w) as f64 / 2.0,
-                                (args.image_size - h) as f64 / 2.0,
-                            );
-                            if recvd_iteration < args.iterations {
-                                let color = rgba(
-                                    // cmp::min(score as u64, 255) as u8,
-                                    // cmp::min(score as u64, 255 * 2).saturating_sub(255) as u8,
-                                    // cmp::min(score as u64, 255 * 3).saturating_sub(255 * 2) as u8,
-                                    if score <= 255.0 { score as u8 } else { 0 },
-                                    if score <= 255.0 * 2.0 && score > 255.0 {
-                                        (score - 255.0) as u8
-                                    } else {
-                                        0
-                                    },
-                                    if score <= 255.0 * 3.0 && score > 255.0 * 2.0 {
-                                        (score - 255.0 * 2.0) as u8
-                                    } else {
-                                        0
-                                    },
-                                    1.0,
+        let bg_texture = Texture::from_image(
+            &DynamicImage::ImageRgb8(padded_image).to_rgba8(),
+            &TextureSettings::new(),
+        );
+
+        while let Some(e) = events.next(&mut window) {
+            if let Some(render_args) = e.render_args() {
+                use graphics::clear;
+
+                gl.draw(render_args.viewport(), |c, gl| {
+                    clear(rgba(0, 0, 0, 1.0), gl);
+                    graphics::Image::new()
+                        .rect(rectangle_by_points(
+                            F64x2::splat(40.0),
+                            F64x2::splat(40.0) + F64x2::splat(args.image_size as f64),
+                        ))
+                        .draw(
+                            &bg_texture,
+                            &graphics::DrawState::default(),
+                            c.transform,
+                            gl,
+                        );
+
+                    for (x, y, _) in recvd_tris.clone().into_iter_verts() {
+                        recvd_tris
+                            .triangles_around_point(x, y)
+                            .into_iter()
+                            .for_each(|mut t| {
+                                let colors = get_color_in_triangle(&raw_image, t);
+
+                                // let avg = average(&colors);
+                                // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
+
+                                let score = score(&colors, &raw_image, &args);
+                                assert!(
+                                    0.0 <= score && score <= 255.0 * 3.0,
+                                    "Score was too large/small! (score: {score})"
                                 );
-                                // let color = RED;
-                                t.draw_outline(2.0, color, &c, gl);
-                            } else {
-                                let color;
-                                if colors.is_empty() {
-                                    color = rgba(0, 0, 0, 0.0);
+                                // println!("Score: {}", score as u8);
+                                t = t.offset(40.0, 40.0);
+                                t = t.offset(
+                                    (args.image_size - w) as f64 / 2.0,
+                                    (args.image_size - h) as f64 / 2.0,
+                                );
+                                if recvd_iteration < args.iterations {
+                                    let color = rgba(
+                                        if score <= 255.0 { score as u8 } else { 0 },
+                                        if score <= 255.0 * 2.0 && score > 255.0 {
+                                            (score - 255.0) as u8
+                                        } else {
+                                            0
+                                        },
+                                        if score <= 255.0 * 3.0 && score > 255.0 * 2.0 {
+                                            (score - 255.0 * 2.0) as u8
+                                        } else {
+                                            0
+                                        },
+                                        1.0,
+                                    );
+                                    // let color = RED;
+                                    t.draw_outline(2.0, color, &c, gl);
                                 } else {
-                                    let Rgb([r, g, b]) = average(&colors);
-                                    color = rgba(r, g, b, 1.0);
+                                    let color;
+                                    if colors.is_empty() {
+                                        color = rgba(0, 0, 0, 0.0);
+                                    } else {
+                                        let Rgb([r, g, b]) = average(&colors);
+                                        color = rgba(r, g, b, 1.0);
+                                    }
+                                    t.draw(color, &c, gl);
                                 }
-                                t.draw(color, &c, gl);
-                            }
-                        });
-                }
-            });
-        }
+                            });
+                    }
+                });
+            }
 
-        if let Some(_u_args) = e.update_args() {
-            match proc_thread_comm.1.try_recv() {
-                Ok(values) => {
-                    (recvd_iteration, recvd_tris) = values;
+            if let Some(_u_args) = e.update_args() {
+                match proc_thread_comm.1.try_recv() {
+                    Ok(values) => {
+                        (recvd_iteration, recvd_tris) = values;
+                    }
+                    Err(flume::TryRecvError::Empty) => {}
+                    Err(flume::TryRecvError::Disconnected) => {
+                        if let Some(proc_thread) = proc_thread.take() {
+                            println!("Procesing thread exiting");
+                            match proc_thread.join() {
+                                Ok(..) => {}
+                                Err(err) => std::panic::panic_any(err),
+                            }
+                            save(&recvd_tris, &raw_image, &args);
+                        }
+                    }
                 }
-                Err(flume::TryRecvError::Empty) => {}
-                Err(flume::TryRecvError::Disconnected) => {
+            }
+        }
+    } else {
+        if args.output.is_none() {
+            warn!("no outputs (visualization or file) are set, so this will take a lot of time to do nothing")
+        }
+        loop {
+            match proc_thread_comm.1.recv() {
+                Ok(values) => {
+                    let _ = values;
+                }
+                Err(flume::RecvError::Disconnected) => {
                     if let Some(proc_thread) = proc_thread.take() {
                         println!("Procesing thread exiting");
                         match proc_thread.join() {
@@ -267,6 +288,7 @@ async fn main() -> Result<()> {
                         }
                         save(&recvd_tris, &raw_image, &args);
                     }
+                    break;
                 }
             }
         }
