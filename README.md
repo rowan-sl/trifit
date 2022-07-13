@@ -10,7 +10,7 @@ and give you beautefull triangle versions
 <img src="./doc/assets/out/aroura_sky.png" width="400">
 <img src="./doc/assets/out/fire.png" width="400">
 
-and finally, it can create mindustry logic to display the images it creates in game! **(coming soon)**
+and finally, it can create mindustry logic to display the images it creates `--format mindustry`
 
 ## Usage
 
@@ -22,7 +22,7 @@ for more details about useage, run `trifit --help`
 
 ### Output formats
 
-you can also specify a file to write the result to, and its format with `--format`. available formats are `svg`, `image` (type determined by file extension), and `mindustry` (again, comeing soon)
+you can also specify a file to write the result to, and its format with `--format`. available formats are `svg`, `image` (type determined by file extension), and `mindustry`
 
 ### Visualizations
 
