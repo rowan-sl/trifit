@@ -10,7 +10,13 @@ and give you beautefull triangle versions
 <img src="./doc/assets/out/aroura_sky.png" width="400">
 <img src="./doc/assets/out/fire.png" width="400">
 
-and finally, it can create mindustry logic to display the images it creates `--format mindustry`
+and finally, it can create mindustry logic to display the images it creates `--format mindustry` like so:
+
+<img src="./doc/assets/out/mindustry-tree.png" width="400">
+
+this can be used to get good looking logic images with VERY few processors (just make shure to use `--image-size 176` or `--image-size 80`)
+
+note: *schematics are not auto-generated, only code is. this will improve in the future*
 
 ## Usage
 
@@ -23,6 +29,8 @@ for more details about useage, run `trifit --help`
 ### Output formats
 
 you can also specify a file to write the result to, and its format with `--format`. available formats are `svg`, `image` (type determined by file extension), and `mindustry`
+
+when outputing to the `mindustry` format, it will produce multiple files if it gets too long. it will draw to the `display1` output.
 
 ### Visualizations
 
