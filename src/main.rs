@@ -72,6 +72,9 @@ pub struct Args {
     #[clap(long, action)]
     no_visuals: bool,
 
+    #[clap(long, action)]
+    exit_early: bool,
+
     #[clap(long, short, arg_enum, value_parser)]
     format: Option<OutputFormat>,
 }
@@ -120,6 +123,7 @@ async fn main() -> Result<()> {
         let image = raw_image2;
         let args = args2;
         let mut tris = original_tris;
+        let mut last_tris = tris.clone();
         let mut iteration: usize = 0;
 
         'main: loop {
@@ -143,6 +147,18 @@ async fn main() -> Result<()> {
             println!("Optimizer step");
             println!("    iteration #{iteration}");
             println!("    took {opt_dur:?}");
+            if args.exit_early {
+                if tris == last_tris {
+                    println!("No more work to do, finishing early");
+                    proc_thread_comm
+                        .0
+                        .send((usize::MAX /* signals that all iterations are complete, even if they are not */, tris.clone()))
+                        .expect("Processing thread exiting -- main thread panic detected");
+                    break;
+                } else {
+                    last_tris = tris.clone();
+                }
+            }
             if iteration >= args.iterations {
                 break;
             }
