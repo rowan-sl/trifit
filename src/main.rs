@@ -67,15 +67,16 @@ pub struct Args {
     )]
     randomness: usize,
 
+    #[clap(help="file to output to")]
     output: Option<PathBuf>,
 
-    #[clap(long, action)]
+    #[clap(long, action, help = "do not display visualizations")]
     no_visuals: bool,
 
-    #[clap(long, action)]
+    #[clap(long, action, help = "exit early when no changes occur during an iteration")]
     exit_early: bool,
 
-    #[clap(long, short, arg_enum, value_parser)]
+    #[clap(long, short, arg_enum, value_parser, help = "output format to use")]
     format: Option<OutputFormat>,
 }
 
@@ -102,8 +103,8 @@ async fn main() -> Result<()> {
 
     info!("Initialized");
 
-    let unscaled = load_image(&args);
-    let (w, h, raw_image, padded_image) = scale_image(unscaled, &args);
+    let unscaled = load_image(args.file.clone());
+    let (w, h, raw_image, padded_image) = scale_image(unscaled, args.image_size);
 
     let original_tris = Triangles::new(
         w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
@@ -224,7 +225,7 @@ async fn main() -> Result<()> {
                                 // let avg = average(&colors);
                                 // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
 
-                                let score = score(&colors, &raw_image, &args);
+                                let score = score(&colors, &raw_image, args.tri_size);
                                 assert!(
                                     0.0 <= score && score <= 255.0 * 3.0,
                                     "Score was too large/small! (score: {score})"
@@ -280,7 +281,7 @@ async fn main() -> Result<()> {
                                 Ok(..) => {}
                                 Err(err) => std::panic::panic_any(err),
                             }
-                            save(&recvd_tris, &raw_image, &args);
+                            save(&recvd_tris, &raw_image, args.image_size, args.output.clone().unwrap(), args.format.clone().unwrap());
                         }
                     }
                 }
@@ -302,7 +303,7 @@ async fn main() -> Result<()> {
                             Ok(..) => {}
                             Err(err) => std::panic::panic_any(err),
                         }
-                        save(&recvd_tris, &raw_image, &args);
+                        save(&recvd_tris, &raw_image, args.image_size, args.output.clone().unwrap(), args.format.clone().unwrap());
                     }
                     break;
                 }
@@ -333,7 +334,7 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
         return;
     }
     let group = tris.triangles_around_point(xy.0, xy.1);
-    let original_score = score_for_group(image, &group, args);
+    let original_score = score_for_group(image, &group, args.tri_size);
     // println!("Opt: ");
     // println!("    Original score: {original_score}");
 
@@ -381,7 +382,7 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
             at.x += dx;
             at.y += dy;
             let group = tris.triangles_around_point(xy.0, xy.1);
-            let new_score = score_for_group(image, &group, args);
+            let new_score = score_for_group(image, &group, args.tri_size);
             // println!("    possible new score: {new_score}");
             *tris.get_vert_mut(xy.0, xy.1) = original;
             (dx, dy, new_score)

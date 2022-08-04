@@ -1,140 +1,138 @@
-use std::{cmp, fs::OpenOptions, io::Write};
+use std::{cmp, fs::OpenOptions, io::Write, path::PathBuf};
 
 use image::{DynamicImage, GenericImage, Rgb, RgbImage, RgbaImage};
 
 use crate::{
     triangle::{RelVertPos, Triangle, Triangles},
     utils::{average, get_color_in_triangle},
-    Args, OutputFormat,
+    OutputFormat,
 };
 
-pub fn save(tris: &Triangles, image: &RgbImage, args: &Args) {
-    if let Some(out_file) = args.output.clone() {
-        match args.format.as_ref().unwrap() {
-            OutputFormat::Svg => {
-                let svg = make_svg(tris, image, args);
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&out_file)
-                    .unwrap()
-                    .write_all(svg.as_bytes())
-                    .unwrap();
-            }
-            OutputFormat::Image => {
-                let svg = make_svg(tris, image, args); // lies and deceit! (its svgs all the way down)
-                let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
-                let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
-                let pixmap = tiny_skia::PixmapMut::from_bytes(
-                    bytes.as_mut_slice(),
-                    image.width(),
-                    image.height(),
-                )
+pub fn save(tris: &Triangles, image: &RgbImage, image_size: u32, out_file: PathBuf, format: OutputFormat) {
+    match format {
+        OutputFormat::Svg => {
+            let svg = make_svg(tris, image, image_size);
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&out_file)
+                .unwrap()
+                .write_all(svg.as_bytes())
                 .unwrap();
-                resvg::render(
-                    &tree,
-                    usvg::FitTo::Original,
-                    tiny_skia::Transform::default(),
-                    pixmap,
-                );
-                let image = RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap();
-                image.save(&out_file).unwrap();
-            }
-            OutputFormat::Mindustry => {
-                type Inst = (Rgb<u8>, Triangle);
-                let mut map = std::collections::HashMap::<Rgb<u8>, Vec<Triangle>>::new();
-                for (rgb, tri) in tris.clone()
-                    .into_iter_verts()
-                    .map(|v| [(true, v), (false, v)])
-                    .flatten()
-                    .map::<Option<Inst>, _>(|(flipflop, (rx, ry, tri))| {
-                        let (rx1, ry1): (u32, u32);
-                        let (rx2, ry2): (u32, u32);
-                        if flipflop {
-                            (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
-                            (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownLeft)?;
-                        } else {
-                            (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::Right)?;
-                            (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
-                        }
-                        let verts = (tri, *tris.get_vert(rx1, ry1), *tris.get_vert(rx2, ry2));
-                        let color = average(&get_color_in_triangle(
-                            image,
-                            Triangle(verts.0, verts.1, verts.2),
-                        ));
-                        Some((
-                            color,
-                            Triangle(verts.0, verts.1, verts.2)
-                        ))
-                    })
-                    .filter(|i| i.is_some())
-                    .map(|i| i.unwrap())
-                {
-                    if map.contains_key(&rgb) {
-                        map.get_mut(&rgb).unwrap().push(tri);
+        }
+        OutputFormat::Image => {
+            let svg = make_svg(tris, image, image_size); // lies and deceit! (its svgs all the way down)
+            let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
+            let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
+            let pixmap = tiny_skia::PixmapMut::from_bytes(
+                bytes.as_mut_slice(),
+                image.width(),
+                image.height(),
+            )
+            .unwrap();
+            resvg::render(
+                &tree,
+                usvg::FitTo::Original,
+                tiny_skia::Transform::default(),
+                pixmap,
+            );
+            let image = RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap();
+            image.save(&out_file).unwrap();
+        }
+        OutputFormat::Mindustry => {
+            type Inst = (Rgb<u8>, Triangle);
+            let mut map = std::collections::HashMap::<Rgb<u8>, Vec<Triangle>>::new();
+            for (rgb, tri) in tris.clone()
+                .into_iter_verts()
+                .map(|v| [(true, v), (false, v)])
+                .flatten()
+                .map::<Option<Inst>, _>(|(flipflop, (rx, ry, tri))| {
+                    let (rx1, ry1): (u32, u32);
+                    let (rx2, ry2): (u32, u32);
+                    if flipflop {
+                        (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
+                        (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownLeft)?;
                     } else {
-                        map.insert(rgb, vec![tri]);
+                        (rx1, ry1) = tris.pos_rel(rx, ry, RelVertPos::Right)?;
+                        (rx2, ry2) = tris.pos_rel(rx, ry, RelVertPos::DownRight)?;
                     }
-                }
-
-                let path = out_file.with_extension("").to_str().unwrap().to_string();
-                let mut res = String::new();
-                let mut count = 0usize;
-                let mut icount = 0usize;
-                let mut fcount = 0usize;
-                for (color, locations) in map {
-                    res.push_str(&format!(
-                        "draw color {r} {g} {b} 0 0 0\n",
-                        r = color.0[0],
-                        g = color.0[1],
-                        b = color.0[2],
+                    let verts = (tri, *tris.get_vert(rx1, ry1), *tris.get_vert(rx2, ry2));
+                    let color = average(&get_color_in_triangle(
+                        image,
+                        Triangle(verts.0, verts.1, verts.2),
                     ));
+                    Some((
+                        color,
+                        Triangle(verts.0, verts.1, verts.2)
+                    ))
+                })
+                .filter(|i| i.is_some())
+                .map(|i| i.unwrap())
+            {
+                if map.contains_key(&rgb) {
+                    map.get_mut(&rgb).unwrap().push(tri);
+                } else {
+                    map.insert(rgb, vec![tri]);
+                }
+            }
+
+            let path = out_file.with_extension("").to_str().unwrap().to_string();
+            let mut res = String::new();
+            let mut count = 0usize;
+            let mut icount = 0usize;
+            let mut fcount = 0usize;
+            for (color, locations) in map {
+                res.push_str(&format!(
+                    "draw color {r} {g} {b} 0 0 0\n",
+                    r = color.0[0],
+                    g = color.0[1],
+                    b = color.0[2],
+                ));
+                count += 1;
+                icount += 1;
+                for mut tri in locations {
+                    tri.0.y = image.height() as f64 - tri.0.y + ((image_size - image.height()) as f64 / 2.0);
+                    tri.1.y = image.height() as f64 - tri.1.y + ((image_size - image.height()) as f64 / 2.0);
+                    tri.2.y = image.height() as f64 - tri.2.y + ((image_size - image.height()) as f64 / 2.0);
+                    // println!("{x} {y}");
+                    res.push_str(&format!("draw triangle {} {} {} {} {} {}\n", tri.0.x, tri.0.y, tri.1.x, tri.1.y, tri.2.x, tri.2.y));
                     count += 1;
                     icount += 1;
-                    for mut tri in locations {
-                        tri.0.y = image.height() as f64 - tri.0.y + ((args.image_size - image.height()) as f64 / 2.0);
-                        tri.1.y = image.height() as f64 - tri.1.y + ((args.image_size - image.height()) as f64 / 2.0);
-                        tri.2.y = image.height() as f64 - tri.2.y + ((args.image_size - image.height()) as f64 / 2.0);
-                        // println!("{x} {y}");
-                        res.push_str(&format!("draw triangle {} {} {} {} {} {}\n", tri.0.x, tri.0.y, tri.1.x, tri.1.y, tri.2.x, tri.2.y));
-                        count += 1;
-                        icount += 1;
-                        // println!("{count}");
-                        if count >= 990 {
-                            res.push_str("drawflush display1\n");
-                            OpenOptions::new().write(true).create(true).truncate(true).open(format!("{path}{fcount}.mlog")).unwrap().write_all(&res.as_bytes()).unwrap();
-                            res.clear();
-                            res.push_str(&format!(
-                                "draw color {r} {g} {b} 0 0 0\n",
-                                r = color.0[0],
-                                g = color.0[1],
-                                b = color.0[2],
-                            ));
-                            count = 1;
-                            fcount += 1;
-                        }
-                        if icount > 250 {
-                            res.push_str("drawflush display1\n");
-                            res.push_str(&format!(
-                                "draw color {r} {g} {b} 0 0 0\n",
-                                r = color.0[0],
-                                g = color.0[1],
-                                b = color.0[2],
-                            ));
-                            icount = 0;
-                        }
+                    // println!("{count}");
+                    if count >= 990 {
+                        res.push_str("drawflush display1\n");
+                        OpenOptions::new().write(true).create(true).truncate(true).open(format!("{path}{fcount}.mlog")).unwrap().write_all(&res.as_bytes()).unwrap();
+                        res.clear();
+                        res.push_str(&format!(
+                            "draw color {r} {g} {b} 0 0 0\n",
+                            r = color.0[0],
+                            g = color.0[1],
+                            b = color.0[2],
+                        ));
+                        count = 1;
+                        fcount += 1;
+                    }
+                    if icount > 250 {
+                        res.push_str("drawflush display1\n");
+                        res.push_str(&format!(
+                            "draw color {r} {g} {b} 0 0 0\n",
+                            r = color.0[0],
+                            g = color.0[1],
+                            b = color.0[2],
+                        ));
+                        icount = 0;
                     }
                 }
-                res.push_str("drawflush display1\n");
-                OpenOptions::new().write(true).create(true).truncate(true).open(format!("{path}{fcount}.mlog")).unwrap().write_all(&res.as_bytes()).unwrap();
             }
+            res.push_str("drawflush display1\n");
+            OpenOptions::new().write(true).create(true).truncate(true).open(format!("{path}{fcount}.mlog")).unwrap().write_all(&res.as_bytes()).unwrap();
         }
-        println!("Saved to {out_file:?}");
     }
+    println!("Saved to {out_file:?}");
 }
 
-pub fn make_svg(tris: &Triangles, image: &RgbImage, args: &Args) -> String {
+pub fn make_svg(tris: &Triangles, image: &RgbImage, image_size: u32) -> String {
     use svg::{node::element::Polygon, Document};
 
     let nodes = tris
@@ -176,7 +174,7 @@ pub fn make_svg(tris: &Triangles, image: &RgbImage, args: &Args) -> String {
                     ),
             )
         });
-    let mut doc = Document::new().set("viewBox", (0, 0, args.image_size, args.image_size));
+    let mut doc = Document::new().set("viewBox", (0, 0, image_size, image_size));
     for node in nodes {
         if let Some(node) = node {
             doc = doc.add(node);
@@ -185,8 +183,8 @@ pub fn make_svg(tris: &Triangles, image: &RgbImage, args: &Args) -> String {
     doc.to_string()
 }
 
-pub fn load_image(args: &Args) -> RgbImage {
-    let path = args.file.canonicalize().expect("invalid path!");
+pub fn load_image(file: PathBuf) -> RgbImage {
+    let path = file.canonicalize().expect("invalid path!");
     assert!(path.exists(), "input file must exist!");
     // let extension = path.extension().expect("File does not have an extension").to_str().expect("File extension must be valid UTF-8");
     let gif_decoder = {
@@ -224,7 +222,7 @@ pub fn load_image(args: &Args) -> RgbImage {
     }
 }
 
-pub fn scale_image(unscaled: RgbImage, args: &Args) -> (u32, u32, RgbImage, RgbImage) {
+pub fn scale_image(unscaled: RgbImage, scale_to: u32) -> (u32, u32, RgbImage, RgbImage) {
     enum Axis {
         X,
         Y,
@@ -236,7 +234,7 @@ pub fn scale_image(unscaled: RgbImage, args: &Args) -> (u32, u32, RgbImage, RgbI
         cmp::Ordering::Less => Axis::Y,
     };
 
-    let image_size = args.image_size;
+    let image_size = scale_to;
 
     match larger {
         Axis::X => {

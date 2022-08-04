@@ -3,7 +3,7 @@ use std::cmp;
 use image::{Rgb, RgbImage};
 use lazysort::SortedBy;
 
-use crate::{triangle::Triangle, vec2::F64x2, Args};
+use crate::{triangle::Triangle, vec2::F64x2};
 
 pub fn rectangle_by_points(c0: F64x2, c1: F64x2) -> [f64; 4] {
     graphics::rectangle::rectangle_by_corners(c0.x, c0.y, c1.x, c1.y)
@@ -151,11 +151,11 @@ pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
     ])
 }
 
-pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
-    let w = image.width() + (args.tri_size - image.width() as f64 % args.tri_size.ceil()) as u32;
-    let h = image.height() + (args.tri_size - image.height() as f64 % args.tri_size.ceil()) as u32;
+pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, tri_size: f64) -> f64 {
+    let w = image.width() + (tri_size - image.width() as f64 % tri_size.ceil()) as u32;
+    let h = image.height() + (tri_size - image.height() as f64 % tri_size.ceil()) as u32;
     let appt = (image.width() * image.height())
-        / ((w as f64 / args.tri_size) * (h as f64 / args.tri_size)) as u32;
+        / ((w as f64 / tri_size) * (h as f64 / tri_size)) as u32;
 
     fn max(a: f64, b: f64) -> f64 {
         if a > b {
@@ -203,10 +203,10 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, args: &Args) -> f64 {
     //     }
 }
 
-pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>, args: &Args) -> f64 {
+pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>, tri_size: f64) -> f64 {
     let scores = group
         .iter()
-        .map(|t| score(&get_color_in_triangle(image, *t), image, args));
+        .map(|t| score(&get_color_in_triangle(image, *t), image, tri_size));
     // println!("scores: {scores:?}");
     let r = scores.sum::<f64>() / group.len() as f64;
     if r.is_nan() {
