@@ -3,7 +3,7 @@ use std::cmp;
 use image::{Rgb, RgbImage};
 use lazysort::SortedBy;
 
-use crate::{triangle::Triangle, vec2::F64x2};
+use crate::{triangle::Triangle, vec2::F64x2, ScoringScheme};
 
 pub fn rectangle_by_points(c0: F64x2, c1: F64x2) -> [f64; 4] {
     graphics::rectangle::rectangle_by_corners(c0.x, c0.y, c1.x, c1.y)
@@ -151,62 +151,69 @@ pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
     ])
 }
 
-pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, tri_size: f64) -> f64 {
-    let w = image.width() + (tri_size - image.width() as f64 % tri_size.ceil()) as u32;
-    let h = image.height() + (tri_size - image.height() as f64 % tri_size.ceil()) as u32;
-    let appt = (image.width() * image.height())
-        / ((w as f64 / tri_size) * (h as f64 / tri_size)) as u32;
+pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, tri_size: f64, scheme: ScoringScheme) -> f64 {
+    match scheme {
+        ScoringScheme::PercentileWithSizeWeight => {
+            let w = image.width() + (tri_size - image.width() as f64 % tri_size.ceil()) as u32;
+            let h = image.height() + (tri_size - image.height() as f64 % tri_size.ceil()) as u32;
+            let appt = (image.width() * image.height())
+                / ((w as f64 / tri_size) * (h as f64 / tri_size)) as u32;
 
-    fn max(a: f64, b: f64) -> f64 {
-        if a > b {
-            a
-        } else {
-            b
+            fn max(a: f64, b: f64) -> f64 {
+                if a > b {
+                    a
+                } else {
+                    b
+                }
+            }
+
+            let avg = average(colors);
+            let base = colors
+                .iter()
+                .map(|c| {
+                    max(
+                        max(
+                            (avg.0[0] as f64 - c.0[0] as f64).abs(),
+                            (avg.0[1] as f64 - c.0[1] as f64).abs(),
+                        ),
+                        (avg.0[2] as f64 - c.0[2] as f64).abs(),
+                    )
+                })
+                .sorted_by(|a, b| b.total_cmp(a))
+                .nth(cmp::min(
+                    appt as usize / 20, // 5%
+                    colors.len().saturating_sub(1),
+                ))
+                .unwrap_or(0.0);
+            // let size_score = (deviations.len() - std::cmp::min(appt as usize / 20 /* 5% */, deviations.len())) as f64 * 1.0 /* weight value */;
+            // let size_score = if (appt as f64 * 0.03) as usize > deviations.len() {
+            //     (appt as f64 * 0.03) as usize - deviations.len()
+            // } else { 0 } as f64;
+            // let size_score = 1.0 / (((cmp::min(deviations.len() as u32 + 1, (appt as f64 / 1.0) as u32) as f64 * 10.0)
+            // / (appt as f64 / 1.0)) * 2.0);
+            let size_score = ((appt as f64 / (colors.len() as f64 + 1.0)) / appt as f64) * 255.0;
+            // println!("{}", size_score);
+            if base + size_score > 255.0 * 3.0 {
+                println!("{base} {size_score} {} {}", colors.len(), appt);
+            }
+            base + size_score
+            //     let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
+            //     if r.is_nan() {
+            //         0.0
+            //     } else {
+            //         r
+            //     }
+        },
+        ScoringScheme::ColorspaceOptimized => {
+            todo!()
         }
     }
-
-    let avg = average(colors);
-    let base = colors
-        .iter()
-        .map(|c| {
-            max(
-                max(
-                    (avg.0[0] as f64 - c.0[0] as f64).abs(),
-                    (avg.0[1] as f64 - c.0[1] as f64).abs(),
-                ),
-                (avg.0[2] as f64 - c.0[2] as f64).abs(),
-            )
-        })
-        .sorted_by(|a, b| b.total_cmp(a))
-        .nth(cmp::min(
-            appt as usize / 20, // 5%
-            colors.len().saturating_sub(1),
-        ))
-        .unwrap_or(0.0);
-    // let size_score = (deviations.len() - std::cmp::min(appt as usize / 20 /* 5% */, deviations.len())) as f64 * 1.0 /* weight value */;
-    // let size_score = if (appt as f64 * 0.03) as usize > deviations.len() {
-    //     (appt as f64 * 0.03) as usize - deviations.len()
-    // } else { 0 } as f64;
-    // let size_score = 1.0 / (((cmp::min(deviations.len() as u32 + 1, (appt as f64 / 1.0) as u32) as f64 * 10.0)
-    // / (appt as f64 / 1.0)) * 2.0);
-    let size_score = ((appt as f64 / (colors.len() as f64 + 1.0)) / appt as f64) * 255.0;
-    // println!("{}", size_score);
-    if base + size_score > 255.0 * 3.0 {
-        println!("{base} {size_score} {} {}", colors.len(), appt);
-    }
-    base + size_score
-    //     let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
-    //     if r.is_nan() {
-    //         0.0
-    //     } else {
-    //         r
-    //     }
 }
 
-pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>, tri_size: f64) -> f64 {
+pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>, tri_size: f64, scheme: ScoringScheme) -> f64 {
     let scores = group
         .iter()
-        .map(|t| score(&get_color_in_triangle(image, *t), image, tri_size));
+        .map(|t| score(&get_color_in_triangle(image, *t), image, tri_size, scheme));
     // println!("scores: {scores:?}");
     let r = scores.sum::<f64>() / group.len() as f64;
     if r.is_nan() {

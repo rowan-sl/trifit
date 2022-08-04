@@ -36,6 +36,10 @@ when outputing to the `mindustry` format, it will produce multiple files if it g
 
 as the program runs, it will open a window to display its progress (it also helps aleviate boredom while the program runs). if this is not desierable, use `--no-visuals` to disable this.
 
+### Scoring methods
+
+these affect what method is used to quantify how well a given triangle represents its part of an image, and can be specified with the `--scoring` flag.
+
 ## Installation
 
 ### From Source

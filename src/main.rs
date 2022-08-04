@@ -78,6 +78,9 @@ pub struct Args {
 
     #[clap(long, short, arg_enum, value_parser, help = "output format to use")]
     format: Option<OutputFormat>,
+
+    #[clap(long, arg_enum, value_parser, help="method of scoring triangles", default_value="percentile-with-size-weight")]
+    scoring: ScoringScheme
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -85,6 +88,13 @@ pub enum OutputFormat {
     Svg,
     Image,
     Mindustry,
+}
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum ScoringScheme {
+    /// percentile based system that is weighted against small triangles
+    #[default]
+    PercentileWithSizeWeight,
+    ColorspaceOptimized,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -225,7 +235,7 @@ async fn main() -> Result<()> {
                                 // let avg = average(&colors);
                                 // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
 
-                                let score = score(&colors, &raw_image, args.tri_size);
+                                let score = score(&colors, &raw_image, args.tri_size, args.scoring);
                                 assert!(
                                     0.0 <= score && score <= 255.0 * 3.0,
                                     "Score was too large/small! (score: {score})"
@@ -334,7 +344,7 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
         return;
     }
     let group = tris.triangles_around_point(xy.0, xy.1);
-    let original_score = score_for_group(image, &group, args.tri_size);
+    let original_score = score_for_group(image, &group, args.tri_size, args.scoring);
     // println!("Opt: ");
     // println!("    Original score: {original_score}");
 
@@ -382,7 +392,7 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
             at.x += dx;
             at.y += dy;
             let group = tris.triangles_around_point(xy.0, xy.1);
-            let new_score = score_for_group(image, &group, args.tri_size);
+            let new_score = score_for_group(image, &group, args.tri_size, args.scoring);
             // println!("    possible new score: {new_score}");
             *tris.get_vert_mut(xy.0, xy.1) = original;
             (dx, dy, new_score)
