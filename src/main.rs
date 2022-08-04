@@ -4,7 +4,7 @@ extern crate log;
 pub mod colors;
 pub mod io;
 pub mod triangle;
-pub mod utils;
+pub mod scoring;
 pub mod vec2;
 
 use std::{
@@ -32,7 +32,7 @@ use colors::*;
 use io::{load_image, save, scale_image};
 use rand::{prelude::SliceRandom, Rng};
 use triangle::Triangles;
-use utils::{
+use scoring::{
     average, get_color_in_triangle, point_in_triangle, rectangle_by_points, score, score_for_group,
 };
 use vec2::F64x2;

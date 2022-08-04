@@ -4,7 +4,7 @@ use image::{DynamicImage, GenericImage, Rgb, RgbImage, RgbaImage};
 
 use crate::{
     triangle::{RelVertPos, Triangle, Triangles},
-    utils::{average, get_color_in_triangle},
+    scoring::{average, get_color_in_triangle},
     OutputFormat,
 };
 
