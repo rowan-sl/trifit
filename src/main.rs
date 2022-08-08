@@ -252,13 +252,15 @@ async fn main() -> Result<()> {
                                 Ok(..) => {}
                                 Err(err) => std::panic::panic_any(err),
                             }
-                            save(
-                                &recvd_tris,
-                                &raw_image,
-                                args.image_size,
-                                args.output.clone().unwrap(),
-                                args.format.clone().unwrap(),
-                            );
+                            if args.output.is_some() {
+                                save(
+                                    &recvd_tris,
+                                    &raw_image,
+                                    args.image_size,
+                                    args.output.clone().unwrap(),
+                                    args.format.clone().unwrap(),
+                                );
+                            }
                         }
                     }
                 }
@@ -281,13 +283,15 @@ async fn main() -> Result<()> {
                             Ok(..) => {}
                             Err(err) => std::panic::panic_any(err),
                         }
-                        save(
-                            &recvd_tris,
-                            &raw_image,
-                            args.image_size,
-                            args.output.clone().unwrap(),
-                            args.format.clone().unwrap(),
-                        );
+                        if args.output.is_some() {
+                            save(
+                                &recvd_tris,
+                                &raw_image,
+                                args.image_size,
+                                args.output.clone().unwrap(),
+                                args.format.clone().unwrap(),
+                            );
+                        }
                     }
                     break;
                 }
