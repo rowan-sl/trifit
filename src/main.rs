@@ -354,6 +354,9 @@ fn run_for_image(
         let mut iteration: usize = 0;
 
         'main: loop {
+            if iteration >= args.iterations {
+                break;
+            }
             let starttime = Instant::now();
 
             // randomly iterate through the verticies of the grid
@@ -388,9 +391,6 @@ fn run_for_image(
                 } else {
                     last_tris = tris.clone();
                 }
-            }
-            if iteration >= args.iterations {
-                break;
             }
         }
     }));
