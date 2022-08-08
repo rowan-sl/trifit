@@ -5,6 +5,24 @@ use lazysort::SortedBy;
 
 use crate::{triangle::Triangle, vec2::F64x2, ScoringScheme};
 
+#[inline(always)]
+fn min(a: f64, b: f64) -> f64 {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
+
+#[inline(always)]
+fn max(a: f64, b: f64) -> f64 {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
 pub fn rectangle_by_points(c0: F64x2, c1: F64x2) -> [f64; 4] {
     graphics::rectangle::rectangle_by_corners(c0.x, c0.y, c1.x, c1.y)
 }
@@ -26,24 +44,6 @@ pub fn point_in_triangle(pt: F64x2, v1: F64x2, v2: F64x2, v3: F64x2) -> bool {
 }
 
 pub fn get_color_in_triangle(image: &RgbImage, triangle: Triangle) -> Vec<Rgb<u8>> {
-    #[inline(always)]
-    fn min(a: f64, b: f64) -> f64 {
-        if a < b {
-            a
-        } else {
-            b
-        }
-    }
-
-    #[inline(always)]
-    fn max(a: f64, b: f64) -> f64 {
-        if a > b {
-            a
-        } else {
-            b
-        }
-    }
-
     let minx = min(min(triangle.0.x, triangle.1.x), triangle.2.x)
         .floor()
         .clamp(0.0, image.width() as f64) as u32;
@@ -151,7 +151,13 @@ pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
     ])
 }
 
-pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, tri_size: f64, scheme: ScoringScheme) -> f64 {
+pub fn score(
+    _triangle: Triangle,
+    colors: &Vec<Rgb<u8>>,
+    image: &RgbImage,
+    tri_size: f64,
+    scheme: ScoringScheme,
+) -> f64 {
     match scheme {
         ScoringScheme::PercentileWithSizeWeight => {
             let w = image.width() + (tri_size - image.width() as f64 % tri_size.ceil()) as u32;
@@ -203,17 +209,28 @@ pub fn score(colors: &Vec<Rgb<u8>>, image: &RgbImage, tri_size: f64, scheme: Sco
             //     } else {
             //         r
             //     }
-        },
+        }
         ScoringScheme::ColorspaceOptimized => {
             todo!()
         }
     }
 }
 
-pub fn score_for_group(image: &RgbImage, group: &Vec<Triangle>, tri_size: f64, scheme: ScoringScheme) -> f64 {
-    let scores = group
-        .iter()
-        .map(|t| score(&get_color_in_triangle(image, *t), image, tri_size, scheme));
+pub fn score_for_group(
+    image: &RgbImage,
+    group: &Vec<Triangle>,
+    tri_size: f64,
+    scheme: ScoringScheme,
+) -> f64 {
+    let scores = group.iter().map(|t| {
+        score(
+            *t,
+            &get_color_in_triangle(image, *t),
+            image,
+            tri_size,
+            scheme,
+        )
+    });
     // println!("scores: {scores:?}");
     let r = scores.sum::<f64>() / group.len() as f64;
     if r.is_nan() {

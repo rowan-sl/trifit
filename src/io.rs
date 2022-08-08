@@ -3,12 +3,18 @@ use std::{cmp, fs::OpenOptions, io::Write, path::PathBuf};
 use image::{DynamicImage, GenericImage, Rgb, RgbImage, RgbaImage};
 
 use crate::{
-    triangle::{RelVertPos, Triangle, Triangles},
     scoring::{average, get_color_in_triangle},
+    triangle::{RelVertPos, Triangle, Triangles},
     OutputFormat,
 };
 
-pub fn save(tris: &Triangles, image: &RgbImage, image_size: u32, out_file: PathBuf, format: OutputFormat) {
+pub fn save(
+    tris: &Triangles,
+    image: &RgbImage,
+    image_size: u32,
+    out_file: PathBuf,
+    format: OutputFormat,
+) {
     match format {
         OutputFormat::Svg => {
             let svg = make_svg(tris, image, image_size);
@@ -43,7 +49,8 @@ pub fn save(tris: &Triangles, image: &RgbImage, image_size: u32, out_file: PathB
         OutputFormat::Mindustry => {
             type Inst = (Rgb<u8>, Triangle);
             let mut map = std::collections::HashMap::<Rgb<u8>, Vec<Triangle>>::new();
-            for (rgb, tri) in tris.clone()
+            for (rgb, tri) in tris
+                .clone()
                 .into_iter_verts()
                 .map(|v| [(true, v), (false, v)])
                 .flatten()
@@ -62,10 +69,7 @@ pub fn save(tris: &Triangles, image: &RgbImage, image_size: u32, out_file: PathB
                         image,
                         Triangle(verts.0, verts.1, verts.2),
                     ));
-                    Some((
-                        color,
-                        Triangle(verts.0, verts.1, verts.2)
-                    ))
+                    Some((color, Triangle(verts.0, verts.1, verts.2)))
                 })
                 .filter(|i| i.is_some())
                 .map(|i| i.unwrap())
@@ -92,17 +96,30 @@ pub fn save(tris: &Triangles, image: &RgbImage, image_size: u32, out_file: PathB
                 count += 1;
                 icount += 1;
                 for mut tri in locations {
-                    tri.0.y = image.height() as f64 - tri.0.y + ((image_size - image.height()) as f64 / 2.0);
-                    tri.1.y = image.height() as f64 - tri.1.y + ((image_size - image.height()) as f64 / 2.0);
-                    tri.2.y = image.height() as f64 - tri.2.y + ((image_size - image.height()) as f64 / 2.0);
+                    tri.0.y = image.height() as f64 - tri.0.y
+                        + ((image_size - image.height()) as f64 / 2.0);
+                    tri.1.y = image.height() as f64 - tri.1.y
+                        + ((image_size - image.height()) as f64 / 2.0);
+                    tri.2.y = image.height() as f64 - tri.2.y
+                        + ((image_size - image.height()) as f64 / 2.0);
                     // println!("{x} {y}");
-                    res.push_str(&format!("draw triangle {} {} {} {} {} {}\n", tri.0.x, tri.0.y, tri.1.x, tri.1.y, tri.2.x, tri.2.y));
+                    res.push_str(&format!(
+                        "draw triangle {} {} {} {} {} {}\n",
+                        tri.0.x, tri.0.y, tri.1.x, tri.1.y, tri.2.x, tri.2.y
+                    ));
                     count += 1;
                     icount += 1;
                     // println!("{count}");
                     if count >= 990 {
                         res.push_str("drawflush display1\n");
-                        OpenOptions::new().write(true).create(true).truncate(true).open(format!("{path}{fcount}.mlog")).unwrap().write_all(&res.as_bytes()).unwrap();
+                        OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .open(format!("{path}{fcount}.mlog"))
+                            .unwrap()
+                            .write_all(&res.as_bytes())
+                            .unwrap();
                         res.clear();
                         res.push_str(&format!(
                             "draw color {r} {g} {b} 0 0 0\n",
@@ -126,7 +143,14 @@ pub fn save(tris: &Triangles, image: &RgbImage, image_size: u32, out_file: PathB
                 }
             }
             res.push_str("drawflush display1\n");
-            OpenOptions::new().write(true).create(true).truncate(true).open(format!("{path}{fcount}.mlog")).unwrap().write_all(&res.as_bytes()).unwrap();
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(format!("{path}{fcount}.mlog"))
+                .unwrap()
+                .write_all(&res.as_bytes())
+                .unwrap();
         }
     }
     println!("Saved to {out_file:?}");

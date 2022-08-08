@@ -3,8 +3,8 @@ extern crate log;
 
 pub mod colors;
 pub mod io;
-pub mod triangle;
 pub mod scoring;
+pub mod triangle;
 pub mod vec2;
 
 use std::{
@@ -13,7 +13,7 @@ use std::{
         atomic::{self, AtomicBool},
         Arc,
     },
-    thread,
+    thread::{self, JoinHandle},
     time::Instant,
 };
 
@@ -31,10 +31,10 @@ use piston::{
 use colors::*;
 use io::{load_image, save, scale_image};
 use rand::{prelude::SliceRandom, Rng};
-use triangle::Triangles;
 use scoring::{
     average, get_color_in_triangle, point_in_triangle, rectangle_by_points, score, score_for_group,
 };
+use triangle::Triangles;
 use vec2::F64x2;
 
 #[derive(Debug, Clone, Parser)]
@@ -67,20 +67,30 @@ pub struct Args {
     )]
     randomness: usize,
 
-    #[clap(help="file to output to")]
+    #[clap(help = "file to output to")]
     output: Option<PathBuf>,
 
     #[clap(long, action, help = "do not display visualizations")]
     no_visuals: bool,
 
-    #[clap(long, action, help = "exit early when no changes occur during an iteration")]
+    #[clap(
+        long,
+        action,
+        help = "exit early when no changes occur during an iteration"
+    )]
     exit_early: bool,
 
     #[clap(long, short, arg_enum, value_parser, help = "output format to use")]
     format: Option<OutputFormat>,
 
-    #[clap(long, arg_enum, value_parser, help="method of scoring triangles", default_value="percentile-with-size-weight")]
-    scoring: ScoringScheme
+    #[clap(
+        long,
+        arg_enum,
+        value_parser,
+        help = "method of scoring triangles",
+        default_value = "percentile-with-size-weight"
+    )]
+    scoring: ScoringScheme,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -113,68 +123,16 @@ async fn main() -> Result<()> {
 
     info!("Initialized");
 
-    let unscaled = load_image(args.file.clone());
-    let (w, h, raw_image, padded_image) = scale_image(unscaled, args.image_size);
-
-    let original_tris = Triangles::new(
-        w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
-        h + (args.tri_size - h as f64 % args.tri_size.ceil()) as u32,
-        args.tri_size,
-    );
-    let mut recvd_tris = original_tris.clone();
-    let mut recvd_iteration = 0usize;
-
-    let proc_thread_comm = flume::bounded::<(usize, Triangles)>(2);
-    let proc_thread_kill = Arc::new(AtomicBool::new(false));
-    let proc_thread_kill2 = proc_thread_kill.clone();
-
-    let raw_image2 = raw_image.clone();
-    let args2 = args.clone();
-    let mut proc_thread = Some(thread::spawn(move || {
-        let image = raw_image2;
-        let args = args2;
-        let mut tris = original_tris;
-        let mut last_tris = tris.clone();
-        let mut iteration: usize = 0;
-
-        'main: loop {
-            let starttime = Instant::now();
-
-            let mut verts = tris.clone().into_iter_verts().collect::<Vec<_>>();
-            verts.shuffle(&mut rand::thread_rng());
-            for (x, y, _) in verts {
-                optimize_one(&image, &mut tris, (x, y), &args);
-                if proc_thread_kill2.load(atomic::Ordering::Relaxed) {
-                    break 'main;
-                }
-            }
-            iteration += 1;
-            let endtime = Instant::now();
-            let opt_dur = endtime - starttime;
-            proc_thread_comm
-                .0
-                .send((iteration, tris.clone()))
-                .expect("Processing thread exiting -- main thread panic detected");
-            println!("Optimizer step");
-            println!("    iteration #{iteration}");
-            println!("    took {opt_dur:?}");
-            if args.exit_early {
-                if tris == last_tris {
-                    println!("No more work to do, finishing early");
-                    proc_thread_comm
-                        .0
-                        .send((usize::MAX /* signals that all iterations are complete, even if they are not */, tris.clone()))
-                        .expect("Processing thread exiting -- main thread panic detected");
-                    break;
-                } else {
-                    last_tris = tris.clone();
-                }
-            }
-            if iteration >= args.iterations {
-                break;
-            }
-        }
-    }));
+    let (
+        raw_image,
+        padded_image,
+        (w, h),
+        mut recvd_tris,
+        mut recvd_iteration,
+        proc_thread_comm,
+        proc_thread_kill,
+        mut proc_thread,
+    ) = run_for_image(args.clone());
 
     if !args.no_visuals {
         // Change this to OpenGL::V2_1 if not working.
@@ -235,7 +193,8 @@ async fn main() -> Result<()> {
                                 // let avg = average(&colors);
                                 // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
 
-                                let score = score(&colors, &raw_image, args.tri_size, args.scoring);
+                                let score =
+                                    score(t, &colors, &raw_image, args.tri_size, args.scoring);
                                 assert!(
                                     0.0 <= score && score <= 255.0 * 3.0,
                                     "Score was too large/small! (score: {score})"
@@ -279,7 +238,9 @@ async fn main() -> Result<()> {
             }
 
             if let Some(_u_args) = e.update_args() {
-                match proc_thread_comm.1.try_recv() {
+                match proc_thread_comm.try_recv() {
+                    // handle incoming updates from proc thread, as well as errors from that thread
+                    // this also handles saving the image on exit
                     Ok(values) => {
                         (recvd_iteration, recvd_tris) = values;
                     }
@@ -291,7 +252,13 @@ async fn main() -> Result<()> {
                                 Ok(..) => {}
                                 Err(err) => std::panic::panic_any(err),
                             }
-                            save(&recvd_tris, &raw_image, args.image_size, args.output.clone().unwrap(), args.format.clone().unwrap());
+                            save(
+                                &recvd_tris,
+                                &raw_image,
+                                args.image_size,
+                                args.output.clone().unwrap(),
+                                args.format.clone().unwrap(),
+                            );
                         }
                     }
                 }
@@ -301,8 +268,9 @@ async fn main() -> Result<()> {
         if args.output.is_none() {
             warn!("no outputs (visualization or file) are set, so this will take a lot of time to do nothing")
         }
+        // run untill computation is done, and then save the image
         loop {
-            match proc_thread_comm.1.recv() {
+            match proc_thread_comm.recv() {
                 Ok(values) => {
                     let _ = values;
                 }
@@ -313,7 +281,13 @@ async fn main() -> Result<()> {
                             Ok(..) => {}
                             Err(err) => std::panic::panic_any(err),
                         }
-                        save(&recvd_tris, &raw_image, args.image_size, args.output.clone().unwrap(), args.format.clone().unwrap());
+                        save(
+                            &recvd_tris,
+                            &raw_image,
+                            args.image_size,
+                            args.output.clone().unwrap(),
+                            args.format.clone().unwrap(),
+                        );
                     }
                     break;
                 }
@@ -321,9 +295,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    // send kill signal
     proc_thread_kill.store(true, atomic::Ordering::Relaxed);
+    // wait for exit
     loop {
-        let _ = proc_thread_comm.1.try_recv();
+        let _ = proc_thread_comm.try_recv();
         if let Some(proc_thread) = proc_thread.as_ref() {
             if proc_thread.is_finished() {
                 break;
@@ -335,19 +311,116 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn run_for_image(
+    args: Args,
+) -> (
+    RgbImage,
+    RgbImage,
+    (u32, u32),
+    Triangles,
+    usize,
+    flume::Receiver<(usize, Triangles)>,
+    Arc<AtomicBool>,
+    Option<JoinHandle<()>>,
+) {
+    let unscaled = load_image(args.file.clone());
+    // scale the image to the size specified in the args, while retainging the aspect ratio
+    let (w, h, raw_image, padded_image) = scale_image(unscaled, args.image_size);
+
+    // create the starting grid of triangles
+    let original_tris = Triangles::new(
+        w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
+        h + (args.tri_size - h as f64 % args.tri_size.ceil()) as u32,
+        args.tri_size,
+    );
+    // variables to be filled in by the processing thread
+    let recvd_tris = original_tris.clone();
+    let recvd_iteration = 0usize;
+
+    // communication between the processing and display threads
+    let proc_thread_comm = flume::bounded::<(usize, Triangles)>(2);
+    let proc_thread_kill = Arc::new(AtomicBool::new(false));
+    let proc_thread_kill2 = proc_thread_kill.clone();
+
+    // copy of inputs for proc thread
+    let raw_image2 = raw_image.clone();
+    let args2 = args.clone();
+    let proc_thread = Some(thread::spawn(move || {
+        let image = raw_image2;
+        let args = args2;
+        let mut tris = original_tris;
+        let mut last_tris = tris.clone();
+        // counts the number of steps left
+        let mut iteration: usize = 0;
+
+        'main: loop {
+            let starttime = Instant::now();
+
+            // randomly iterate through the verticies of the grid
+            let mut verts = tris.clone().into_iter_verts().collect::<Vec<_>>();
+            verts.shuffle(&mut rand::thread_rng());
+            for (x, y, _) in verts {
+                // for each vertex, run a optimization on it that shifts it to the best nearby position, if there is one.
+                optimize_one(&image, &mut tris, (x, y), &args);
+                if proc_thread_kill2.load(atomic::Ordering::Relaxed) {
+                    break 'main;
+                }
+            }
+            iteration += 1;
+            let endtime = Instant::now();
+            let opt_dur = endtime - starttime;
+            // report back to the display thread with progress to be shown
+            proc_thread_comm
+                .0
+                .send((iteration, tris.clone()))
+                .expect("Processing thread exiting -- main thread panic detected");
+            println!("Optimizer step");
+            println!("    iteration #{iteration}");
+            println!("    took {opt_dur:?}");
+            if args.exit_early {
+                if tris == last_tris {
+                    println!("No more work to do, finishing early");
+                    proc_thread_comm
+                        .0
+                        .send((usize::MAX /* signals that all iterations are complete, even if they are not */, tris.clone()))
+                        .expect("Processing thread exiting -- main thread panic detected");
+                    break;
+                } else {
+                    last_tris = tris.clone();
+                }
+            }
+            if iteration >= args.iterations {
+                break;
+            }
+        }
+    }));
+
+    (
+        raw_image,
+        padded_image,
+        (w, h),
+        recvd_tris,
+        recvd_iteration,
+        proc_thread_comm.1,
+        proc_thread_kill,
+        proc_thread,
+    )
+}
+
+/// finds a new optimal position for a vertex in the grid of triangles
 pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args: &Args) {
     let shift_amnt = args.shift;
     let randomness = args.randomness;
-    // println!("e");
+    // do not move edge verts
     if tris.vert_is_edge(xy.0, xy.1) {
-        // println!("edge");
         return;
     }
+    // get the triangles around the current point
     let group = tris.triangles_around_point(xy.0, xy.1);
+    // and score for that group
     let original_score = score_for_group(image, &group, args.tri_size, args.scoring);
-    // println!("Opt: ");
-    // println!("    Original score: {original_score}");
 
+    // possible movements of the point (all directions, and up to some number of steps in that direction)
     let perms = [
         (0.0, 1.0), //   up
         // (0.5, 1.0),
@@ -369,7 +442,7 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
     .into_iter()
     .map(|(x, y)| (x * shift_amnt, y * shift_amnt))
     .map(|(x, y)| {
-        (1..=4)
+        (1..=4/* number of steps in each direction */) // TODO: make this configurable
             .map(|i| (x * i as f64, y * i as f64))
             .collect::<Vec<_>>()
     })
