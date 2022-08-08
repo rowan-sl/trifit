@@ -14,13 +14,13 @@ use std::{
         Arc,
     },
     thread::{self, JoinHandle},
-    time::Instant,
+    time::Instant, fs::OpenOptions, io::{Read, Seek, SeekFrom},
 };
 
 use anyhow::Result;
 use clap::{ArgGroup, Parser, ValueEnum};
 use glutin_window::GlutinWindow;
-use image::{DynamicImage, Rgb, RgbImage};
+use image::{DynamicImage, Rgb, RgbImage, RgbaImage, codecs::gif::GifEncoder};
 use opengl_graphics::{GlGraphics, OpenGL, Texture, TextureSettings};
 use piston::{
     event_loop::{EventSettings, Events},
@@ -98,6 +98,8 @@ pub enum OutputFormat {
     Svg,
     Image,
     Mindustry,
+    /// temporary mode for input/output GIF rendering. does not support display mode. input file must be a gif
+    GifThroughput,
 }
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
 pub enum ScoringScheme {
@@ -105,12 +107,6 @@ pub enum ScoringScheme {
     #[default]
     PercentileWithSizeWeight,
     ColorspaceOptimized,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InputFormat {
-    Gif,
-    Image,
 }
 
 #[tokio::main]
@@ -122,6 +118,145 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Initialized");
+
+    if let Some(OutputFormat::GifThroughput) = args.format {
+        info!("Running in gif-throughput mode -- loading gif");
+        if !args.no_visuals {
+            warn!("Visuals will not be displayed in gif-throughput mode")
+        }
+        let path = args.file.canonicalize().expect("invalid path!");
+        assert!(path.exists(), "input file must exist!");
+        let mut file = OpenOptions::new().read(true).open(&path).expect("Cannot open input file!");
+        let mut raw_buf = vec![];
+        file.read_to_end(&mut raw_buf)?;
+        if let image::ImageFormat::Gif = image::guess_format(&raw_buf)? {} else {
+            error!("Input must be a gif for gif-throughput mode!");
+        }
+        file.seek(SeekFrom::Start(0))?;
+        info!("Loading file");
+        let mut decoder = gif::DecodeOptions::new();
+        // Configure the decoder such that it will expand the image to RGBA.
+        decoder.set_color_output(gif::ColorOutput::RGBA);
+        // Read the file header
+        let mut decoder = decoder.read_info(file)?;
+        let mut input_frames = vec![];
+        while let Some(frame) = decoder.read_next_frame()? {
+            let raw_frame = frame.clone();
+            let img = RgbaImage::from_raw(
+                frame.width as u32,
+                frame.height as u32,
+                frame.buffer.to_vec(),
+            )
+            .unwrap();
+            input_frames.push((DynamicImage::ImageRgba8(img).to_rgb8(), raw_frame));
+        }
+        let total_frames = input_frames.len();
+        info!("Loaded {total_frames} frames");
+        let mut rendered_frames: Vec<(RgbaImage, gif::Frame)> = vec![];
+
+        for (frame_num, (frame, raw_frame)) in input_frames.into_iter().enumerate() {
+            info!("Frame {frame_num}/{total_frames}");
+            // scale the image to the size specified in the args, while retainging the aspect ratio
+            let (w, h, raw_image, _padded_image) = scale_image(frame, args.image_size);
+
+            let mut recvd_tris = Triangles::new(
+                w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
+                h + (args.tri_size - h as f64 % args.tri_size.ceil()) as u32,
+                args.tri_size,
+            );
+
+            // communication between the processing and display threads
+            let proc_thread_comm = flume::bounded::<(usize, Triangles)>(2);
+            let proc_thread_kill = Arc::new(AtomicBool::new(false));
+            let proc_thread_kill2 = proc_thread_kill.clone();
+
+            // copy of inputs for proc thread
+            let raw_image2 = raw_image.clone();
+            let args2 = args.clone();
+            let mut proc_thread = Some(thread::spawn(move || {
+                let image = raw_image2;
+                let args = args2;
+                let mut tris = Triangles::new(
+                    w + (args.tri_size - w as f64 % args.tri_size.ceil()) as u32,
+                    h + (args.tri_size - h as f64 % args.tri_size.ceil()) as u32,
+                    args.tri_size,
+                );
+                let mut last_tris = tris.clone();
+                // counts the number of steps left
+                let mut iteration: usize = 0;
+
+                'main: loop {
+                    if iteration >= args.iterations {
+                        break;
+                    }
+                    let starttime = Instant::now();
+
+                    // randomly iterate through the verticies of the grid
+                    let mut verts = tris.clone().into_iter_verts().collect::<Vec<_>>();
+                    verts.shuffle(&mut rand::thread_rng());
+                    for (x, y, _) in verts {
+                        // for each vertex, run a optimization on it that shifts it to the best nearby position, if there is one.
+                        optimize_one(&image, &mut tris, (x, y), &args);
+                        if proc_thread_kill2.load(atomic::Ordering::Relaxed) {
+                            break 'main;
+                        }
+                    }
+                    iteration += 1;
+                    let endtime = Instant::now();
+                    let opt_dur = endtime - starttime;
+                    // report back to the display thread with progress to be shown
+                    proc_thread_comm
+                        .0
+                        .send((iteration, tris.clone()))
+                        .expect("Processing thread exiting -- main thread panic detected");
+                    println!("Optimizer step");
+                    println!("    iteration #{iteration}");
+                    println!("    took {opt_dur:?}");
+                    if args.exit_early {
+                        if tris == last_tris {
+                            println!("No more work to do, finishing early");
+                            proc_thread_comm
+                                .0
+                                .send((usize::MAX /* signals that all iterations are complete, even if they are not */, tris.clone()))
+                                .expect("Processing thread exiting -- main thread panic detected");
+                            break;
+                        } else {
+                            last_tris = tris.clone();
+                        }
+                    }
+                }
+            }));
+
+            loop {
+                match proc_thread_comm.1.recv() {
+                    Ok(values) => {
+                        recvd_tris = values.1;
+                    }
+                    Err(flume::RecvError::Disconnected) => {
+                        if let Some(proc_thread) = proc_thread.take() {
+                            info!("Done processing frame");
+                            match proc_thread.join() {
+                                Ok(..) => {}
+                                Err(err) => std::panic::panic_any(err),
+                            }
+                            rendered_frames.push((io::render_image(&recvd_tris, &raw_image, args.image_size), raw_frame))
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        info!("Saving gif");
+        let output_file = OpenOptions::new().create(true).write(true).open(args.output.as_ref().unwrap())?;
+        let mut encoder = GifEncoder::new(output_file);
+        encoder.set_repeat(image::codecs::gif::Repeat::Infinite)?;
+        for (frame, raw_frame) in rendered_frames {
+            // let (width, height) = (frame.width(), frame.height());
+            encoder.encode_frame(image::Frame::from_parts(frame, 0, 0, image::Delay::from_numer_denom_ms(raw_frame.delay as u32, 10)))?;
+            // encoder.encode(&frame.to_vec(), width, height, image::ColorType::Rgba8)?;
+        }
+        return Ok(());
+    }
 
     let (
         raw_image,
@@ -410,6 +545,8 @@ fn run_for_image(
         proc_thread,
     )
 }
+
+
 
 /// finds a new optimal position for a vertex in the grid of triangles
 pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args: &Args) {

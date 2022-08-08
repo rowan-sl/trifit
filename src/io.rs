@@ -28,23 +28,7 @@ pub fn save(
                 .unwrap();
         }
         OutputFormat::Image => {
-            let svg = make_svg(tris, image, image_size); // lies and deceit! (its svgs all the way down)
-            let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
-            let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
-            let pixmap = tiny_skia::PixmapMut::from_bytes(
-                bytes.as_mut_slice(),
-                image.width(),
-                image.height(),
-            )
-            .unwrap();
-            resvg::render(
-                &tree,
-                usvg::FitTo::Original,
-                tiny_skia::Transform::default(),
-                pixmap,
-            );
-            let image = RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap();
-            image.save(&out_file).unwrap();
+            render_image(tris, image, image_size).save(&out_file).unwrap();
         }
         OutputFormat::Mindustry => {
             type Inst = (Rgb<u8>, Triangle);
@@ -152,8 +136,28 @@ pub fn save(
                 .write_all(&res.as_bytes())
                 .unwrap();
         }
+        OutputFormat::GifThroughput => unreachable!()
     }
     println!("Saved to {out_file:?}");
+}
+
+pub fn render_image(tris: &Triangles, image: &RgbImage, image_size: u32) -> RgbaImage {
+    let svg = make_svg(tris, image, image_size); // lies and deceit! (its svgs all the way down)
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
+    let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
+    let pixmap = tiny_skia::PixmapMut::from_bytes(
+        bytes.as_mut_slice(),
+        image.width(),
+        image.height(),
+    )
+    .unwrap();
+    resvg::render(
+        &tree,
+        usvg::FitTo::Original,
+        tiny_skia::Transform::default(),
+        pixmap,
+    );
+    RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap()
 }
 
 pub fn make_svg(tris: &Triangles, image: &RgbImage, image_size: u32) -> String {
