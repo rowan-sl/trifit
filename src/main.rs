@@ -8,25 +8,29 @@ pub mod triangle;
 pub mod vec2;
 
 use std::{
+    cmp::Ordering,
+    fs::OpenOptions,
+    io::{Read, Seek, SeekFrom},
     path::PathBuf,
     sync::{
         atomic::{self, AtomicBool},
         Arc,
     },
     thread::{self, JoinHandle},
-    time::Instant, fs::OpenOptions, io::{Read, Seek, SeekFrom},
+    time::Instant,
 };
 
 use anyhow::Result;
 use clap::{ArgGroup, Parser, ValueEnum};
 use glutin_window::GlutinWindow;
-use image::{DynamicImage, Rgb, RgbImage, RgbaImage, codecs::gif::GifEncoder};
+use image::{codecs::gif::GifEncoder, DynamicImage, Rgb, RgbImage, RgbaImage};
 use opengl_graphics::{GlGraphics, OpenGL, Texture, TextureSettings};
 use piston::{
     event_loop::{EventSettings, Events},
     window::WindowSettings,
     RenderEvent, Size, UpdateEvent,
 };
+use stati::prelude::*;
 
 use colors::*;
 use io::{load_image, save, scale_image};
@@ -106,7 +110,8 @@ pub enum ScoringScheme {
     /// percentile based system that is weighted against small triangles
     #[default]
     PercentileWithSizeWeight,
-    ColorspaceOptimized,
+    /// average based, weighted against very thin triangles
+    AvgWithShapeWeight,
 }
 
 #[tokio::main]
@@ -126,10 +131,14 @@ async fn main() -> Result<()> {
         }
         let path = args.file.canonicalize().expect("invalid path!");
         assert!(path.exists(), "input file must exist!");
-        let mut file = OpenOptions::new().read(true).open(&path).expect("Cannot open input file!");
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .expect("Cannot open input file!");
         let mut raw_buf = vec![];
         file.read_to_end(&mut raw_buf)?;
-        if let image::ImageFormat::Gif = image::guess_format(&raw_buf)? {} else {
+        if let image::ImageFormat::Gif = image::guess_format(&raw_buf)? {
+        } else {
             error!("Input must be a gif for gif-throughput mode!");
         }
         file.seek(SeekFrom::Start(0))?;
@@ -239,7 +248,10 @@ async fn main() -> Result<()> {
                                 Ok(..) => {}
                                 Err(err) => std::panic::panic_any(err),
                             }
-                            rendered_frames.push((io::render_image(&recvd_tris, &raw_image, args.image_size), raw_frame))
+                            rendered_frames.push((
+                                io::render_image(&recvd_tris, &raw_image, args.image_size),
+                                raw_frame,
+                            ))
                         }
                         break;
                     }
@@ -247,12 +259,20 @@ async fn main() -> Result<()> {
             }
         }
         info!("Saving gif");
-        let output_file = OpenOptions::new().create(true).write(true).open(args.output.as_ref().unwrap())?;
+        let output_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(args.output.as_ref().unwrap())?;
         let mut encoder = GifEncoder::new(output_file);
         encoder.set_repeat(image::codecs::gif::Repeat::Infinite)?;
         for (frame, raw_frame) in rendered_frames {
             // let (width, height) = (frame.width(), frame.height());
-            encoder.encode_frame(image::Frame::from_parts(frame, 0, 0, image::Delay::from_numer_denom_ms(raw_frame.delay as u32, 10)))?;
+            encoder.encode_frame(image::Frame::from_parts(
+                frame,
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(raw_frame.delay as u32, 10),
+            ))?;
             // encoder.encode(&frame.to_vec(), width, height, image::ColorType::Rgba8)?;
         }
         return Ok(());
@@ -325,37 +345,32 @@ async fn main() -> Result<()> {
                             .for_each(|mut t| {
                                 let colors = get_color_in_triangle(&raw_image, t);
 
-                                // let avg = average(&colors);
-                                // let color = Color::from_rgba(avg.0[0], avg.0[1], avg.0[2], 255);
-
                                 let score =
                                     score(t, &colors, &raw_image, args.tri_size, args.scoring);
-                                assert!(
-                                    0.0 <= score && score <= 255.0 * 3.0,
-                                    "Score was too large/small! (score: {score})"
-                                );
-                                // println!("Score: {}", score as u8);
                                 t = t.offset(40.0, 40.0);
                                 t = t.offset(
                                     (args.image_size - w) as f64 / 2.0,
                                     (args.image_size - h) as f64 / 2.0,
                                 );
                                 if recvd_iteration < args.iterations {
-                                    let color = rgba(
-                                        if score <= 255.0 { score as u8 } else { 0 },
-                                        if score <= 255.0 * 2.0 && score > 255.0 {
-                                            (score - 255.0) as u8
-                                        } else {
-                                            0
-                                        },
-                                        if score <= 255.0 * 3.0 && score > 255.0 * 2.0 {
-                                            (score - 255.0 * 2.0) as u8
-                                        } else {
-                                            0
-                                        },
-                                        1.0,
-                                    );
-                                    // let color = RED;
+                                    // let color = rgba(
+                                    //     if score <= 255.0 { score as u8 } else { 0 },
+                                    //     if score <= 255.0 * 2.0 && score > 255.0 {
+                                    //         (score - 255.0) as u8
+                                    //     } else {
+                                    //         0
+                                    //     },
+                                    //     if score <= 255.0 * 3.0 && score > 255.0 * 2.0 {
+                                    //         (score - 255.0 * 2.0) as u8
+                                    //     } else {
+                                    //         0
+                                    //     },
+                                    //     1.0,
+                                    // );
+
+                                    // let color = BLUE;
+
+                                    let color = rgba((score.score_value() * 25.5).clamp(0.0, 255.0) as u8, 0, 0, 1.0);
                                     t.draw_outline(2.0, color, &c, gl);
                                 } else {
                                     let color;
@@ -501,7 +516,10 @@ fn run_for_image(
             // randomly iterate through the verticies of the grid
             let mut verts = tris.clone().into_iter_verts().collect::<Vec<_>>();
             verts.shuffle(&mut rand::thread_rng());
-            for (x, y, _) in verts {
+            let len = verts.len();
+            let mut bman = stati::BarManager::new();
+            for (x, y, _) in verts.into_iter().display_bar(bman.register(stati::bars::SimpleBar::new("Iteration progress", len))) {
+                bman.print();
                 // for each vertex, run a optimization on it that shifts it to the best nearby position, if there is one.
                 optimize_one(&image, &mut tris, (x, y), &args);
                 if proc_thread_kill2.load(atomic::Ordering::Relaxed) {
@@ -546,8 +564,6 @@ fn run_for_image(
     )
 }
 
-
-
 /// finds a new optimal position for a vertex in the grid of triangles
 pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args: &Args) {
     let shift_amnt = args.shift;
@@ -591,7 +607,7 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
 
     let tris2 = tris.clone();
 
-    let (dx, dy, best_score) = perms
+    let scores = perms
         .filter(|(dx, dy)| {
             let new = *tris2.get_vert(xy.0, xy.1) + F64x2::new(*dx, *dy);
             tris2
@@ -611,19 +627,22 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
             *tris.get_vert_mut(xy.0, xy.1) = original;
             (dx, dy, new_score)
         })
-        .min_by(|(_, _, a), (_, _, b)| a.partial_cmp(b).unwrap())
-        .unwrap_or((0f64, 0f64, 0f64));
+        .collect::<Vec<_>>();
+    let best = scores.iter().max_by(|(_, _, a), (_, _, b)| a.cmp(b)); // larger scores are considered better
 
-    if best_score < original_score
-        || if randomness != 0 {
-            rand::thread_rng().gen_bool(1.0 / randomness as f64)
-        } else {
-            false
-        }
+    if let Some((mut dx, mut dy, mut best_score)) = best
     {
-        // println!("yay");
-        let at = tris.get_vert_mut(xy.0, xy.1);
-        at.x += dx;
-        at.y += dy;
+        if randomness != 0 {
+            if rand::thread_rng().gen_bool(1.0 / randomness as f64) {
+                (dx, dy, best_score) = *scores.choose(&mut rand::thread_rng()).unwrap();
+            }
+        }
+        if best_score.cmp(&original_score).is_gt()
+        {
+            // println!("yay");
+            let at = tris.get_vert_mut(xy.0, xy.1);
+            at.x += dx;
+            at.y += dy;
+        }
     }
 }

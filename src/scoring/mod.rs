@@ -1,4 +1,4 @@
-use std::cmp;
+use std::cmp::{self, Ordering};
 
 use image::{Rgb, RgbImage};
 use lazysort::SortedBy;
@@ -151,13 +151,84 @@ pub fn average(colors: &Vec<Rgb<u8>>) -> Rgb<u8> {
     ])
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Score {
+    /// has no info (eg: a triangle with no pixels covered)
+    is_none: bool,
+    /// distance between colors, 0-100 (0-perfect match, 100=perfectly disarrayed (impossible?))
+    average_color_distance: f64,
+    /// range of 0-100 (0=line, 100=square)
+    squareness: f64,
+}
+
+impl Score {
+    pub fn average(scores: &[Self]) -> Self {
+        if scores.is_empty() {
+            return Self::none();
+        }
+        Self {
+            is_none: false,
+            average_color_distance: scores
+                .iter()
+                .filter(|score| !score.is_none)
+                .map(|score| score.average_color_distance)
+                .sum::<f64>()
+                / scores.len() as f64,
+            squareness: scores.iter()
+                .filter(|score| !score.is_none)
+                .map(|score| score.squareness)
+                .sum::<f64>()
+                / scores.len() as f64,
+        }
+    }
+
+    pub fn none() -> Self {
+        Self { is_none: true, average_color_distance: 0.0, squareness: 0.0 }
+    }
+
+    /// 0..100, 0=worst, 100=best
+    pub fn score_value(&self) -> f64 {
+        if self.is_none {
+            return 0.0;
+        }
+        /*
+        idea here is to mostly not care about squareness untill it passes some threshold (~0.5),
+         and then start to care a LOT after that
+        */
+        // old version, much more simple (also more agressive at the start / lower at the end)
+        // let weighted_squareness = 1.0 - (3.0 * ((self.squareness / 100.0) - 1.0)).exp(); // 1-e^{3(x-1)}
+
+        // new version, more complex (does not get smaller as early, and does not end at zero)
+        //
+        // convert so 100=line, and 0=square (so that for good values (smaller) it gives more controll to the color part)
+        // then scales into the 0.1 range
+        let s = (100.0 - self.squareness) / 100.0;
+        let weighted_squareness = (1.528
+            * ((1.0 - (3.0 * (0.9 * s - 1.0)).exp())
+                * (0.5 + (1.0 / (1.0 + (-s + 0.5).exp())) / 2.0)))
+            .min(1.0);
+        /*
+        the two values (squareness and color distance) are combined by
+        multiplication, as it makes it scale nicely. color_dist is not scaled down to 0..1,
+        as to improve accuracy
+
+        also converts from 100=worst, 0=best to 100=best, 0=worst for the color dist
+        */
+        (100.0 - self.average_color_distance) * weighted_squareness
+    }
+
+    pub fn cmp(&self, rhs: &Score) -> Ordering {
+        self.score_value().partial_cmp(&rhs.score_value()).unwrap()
+    }
+}
+
 pub fn score(
-    _triangle: Triangle,
+    triangle: Triangle,
     colors: &Vec<Rgb<u8>>,
     image: &RgbImage,
     tri_size: f64,
     scheme: ScoringScheme,
-) -> f64 {
+) -> Score {
     match scheme {
         ScoringScheme::PercentileWithSizeWeight => {
             let w = image.width() + (tri_size - image.width() as f64 % tri_size.ceil()) as u32;
@@ -202,16 +273,54 @@ pub fn score(
             if base + size_score > 255.0 * 3.0 {
                 println!("{base} {size_score} {} {}", colors.len(), appt);
             }
-            base + size_score
+            let _ret = base + size_score;
             //     let r = deviations.iter().sum::<f64>() / deviations.len() as f64;
             //     if r.is_nan() {
             //         0.0
             //     } else {
             //         r
             //     }
-        }
-        ScoringScheme::ColorspaceOptimized => {
             todo!()
+        }
+        ScoringScheme::AvgWithShapeWeight => {
+            if colors.is_empty() {
+                return Score::none();
+            }
+
+            let minx = min(min(triangle.0.x, triangle.1.x), triangle.2.x);
+            let maxx = max(max(triangle.0.x, triangle.1.x), triangle.2.x);
+            let miny = min(min(triangle.0.y, triangle.1.y), triangle.2.y);
+            let maxy = max(max(triangle.0.y, triangle.1.y), triangle.2.y);
+            let width = maxx - minx;
+            let height = maxy - miny;
+
+            fn color_dist(a: Rgb<u8>, b: Rgb<u8>) -> f64 {
+                let r = (a.0[0] - b.0[0]) as f64;
+                let g = (a.0[1] - b.0[1]) as f64;
+                let b = (a.0[2] - b.0[2]) as f64;
+                (r.powi(2) + g.powi(2) + b.powi(2)).sqrt()
+            }
+
+            let avg = average(colors);
+            let average_color_distance = colors
+                .iter()
+                .map(|color| color_dist(*color, avg))
+                .sum::<f64>()
+                / colors.len() as f64
+                / 25.5; /* scale into range of 0..100 */
+            assert!(0.0 <= average_color_distance && average_color_distance <= 100.0);
+
+            let squareness = {
+                let m = max(width, height);
+                2.0 * ((((100.0 * (width + height)) / m) / 2.0) - 50.0)
+            };
+            assert!(0.0 <= squareness && squareness <= 100.0);
+
+            Score {
+                is_none: false,
+                average_color_distance,
+                squareness,
+            }
         }
     }
 }
@@ -221,7 +330,7 @@ pub fn score_for_group(
     group: &Vec<Triangle>,
     tri_size: f64,
     scheme: ScoringScheme,
-) -> f64 {
+) -> Score {
     let scores = group.iter().map(|t| {
         score(
             *t,
@@ -231,12 +340,5 @@ pub fn score_for_group(
             scheme,
         )
     });
-    // println!("scores: {scores:?}");
-    let r = scores.sum::<f64>() / group.len() as f64;
-    if r.is_nan() {
-        // println!("nan");
-        0.0
-    } else {
-        r
-    }
+    Score::average(&scores.collect::<Vec<_>>())
 }
