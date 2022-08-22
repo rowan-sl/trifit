@@ -280,6 +280,7 @@ pub fn score(
             //     } else {
             //         r
             //     }
+            eprintln!("This mode is temporarily broken, use avg-with-shape-weight instead!");
             todo!()
         }
         ScoringScheme::AvgWithShapeWeight => {
