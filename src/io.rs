@@ -14,10 +14,11 @@ pub fn save(
     image_size: u32,
     out_file: PathBuf,
     format: OutputFormat,
+    tracing_mode: bool,
 ) {
     match format {
         OutputFormat::Svg => {
-            let svg = make_svg(tris, image, image_size);
+            let svg = make_svg(tris, image, image_size, tracing_mode);
             OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -28,7 +29,7 @@ pub fn save(
                 .unwrap();
         }
         OutputFormat::Image => {
-            render_image(tris, image, image_size)
+            render_image(tris, image, image_size, tracing_mode)
                 .save(&out_file)
                 .unwrap();
         }
@@ -143,8 +144,8 @@ pub fn save(
     println!("Saved to {out_file:?}");
 }
 
-pub fn render_image(tris: &Triangles, image: &RgbImage, image_size: u32) -> RgbaImage {
-    let svg = make_svg(tris, image, image_size); // lies and deceit! (its svgs all the way down)
+pub fn render_image(tris: &Triangles, image: &RgbImage, image_size: u32, tracing_mode: bool) -> RgbaImage {
+    let svg = make_svg(tris, image, image_size, tracing_mode); // lies and deceit! (its svgs all the way down)
     let tree = usvg::Tree::from_str(&svg, &usvg::Options::default().to_ref()).unwrap();
     let mut bytes = vec![0u8; (image.width() * image.height() * 4) as usize];
     let pixmap =
@@ -159,7 +160,7 @@ pub fn render_image(tris: &Triangles, image: &RgbImage, image_size: u32) -> Rgba
     RgbaImage::from_vec(image.width(), image.height(), bytes).unwrap()
 }
 
-pub fn make_svg(tris: &Triangles, image: &RgbImage, image_size: u32) -> String {
+pub fn make_svg(tris: &Triangles, image: &RgbImage, image_size: u32, tracing_mode: bool /* output black&white tracing mesh */) -> String {
     use svg::{node::element::Polygon, Document};
 
     let nodes = tris
@@ -190,7 +191,7 @@ pub fn make_svg(tris: &Triangles, image: &RgbImage, image_size: u32) -> String {
                     )
                     .set(
                         "stroke",
-                        format!("rgb({}, {}, {})", colors.0[0], colors.0[1], colors.0[2]),
+                        if tracing_mode { "rgb(255, 0, 0)".into() } else { format!("rgb({}, {}, {})", colors.0[0], colors.0[1], colors.0[2]) },
                     )
                     .set(
                         "points",

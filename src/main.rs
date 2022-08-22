@@ -8,7 +8,6 @@ pub mod triangle;
 pub mod vec2;
 
 use std::{
-    cmp::Ordering,
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom},
     path::PathBuf,
@@ -95,6 +94,9 @@ pub struct Args {
         default_value = "percentile-with-size-weight"
     )]
     scoring: ScoringScheme,
+
+    #[clap(long, action, help="draw lines on the edges of triangles to aid in tracing")]
+    tracing_mode: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -249,7 +251,7 @@ async fn main() -> Result<()> {
                                 Err(err) => std::panic::panic_any(err),
                             }
                             rendered_frames.push((
-                                io::render_image(&recvd_tris, &raw_image, args.image_size),
+                                io::render_image(&recvd_tris, &raw_image, args.image_size, args.tracing_mode),
                                 raw_frame,
                             ))
                         }
@@ -409,6 +411,7 @@ async fn main() -> Result<()> {
                                     args.image_size,
                                     args.output.clone().unwrap(),
                                     args.format.clone().unwrap(),
+                                    args.tracing_mode
                                 );
                             }
                         }
@@ -440,6 +443,7 @@ async fn main() -> Result<()> {
                                 args.image_size,
                                 args.output.clone().unwrap(),
                                 args.format.clone().unwrap(),
+                                args.tracing_mode
                             );
                         }
                     }
