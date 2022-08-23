@@ -296,9 +296,9 @@ pub fn score(
             let height = maxy - miny;
 
             fn color_dist(a: Rgb<u8>, b: Rgb<u8>) -> f64 {
-                let r = (a.0[0] - b.0[0]) as f64;
-                let g = (a.0[1] - b.0[1]) as f64;
-                let b = (a.0[2] - b.0[2]) as f64;
+                let r = a.0[0] as f64 - b.0[0] as f64;
+                let g = a.0[1] as f64 - b.0[1] as f64;
+                let b = a.0[2] as f64 - b.0[2] as f64;
                 (r.powi(2) + g.powi(2) + b.powi(2)).sqrt()
             }
 

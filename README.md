@@ -53,3 +53,7 @@ To build trifit from source, clone this repo and do `cargo build` (or `cargo bui
 ## Contribution
 
 Contrbuting is appreciated, feel free to open an issue or pull request. Note that any contribution submitted for inclusion in the project will be licensed according to the terms given in [LICENSE](LICENSE)
+
+## MSRV (Minimum supported rust version)
+
+This crate requires at least rust stable `1.62.1`
