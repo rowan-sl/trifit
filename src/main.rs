@@ -33,7 +33,7 @@ use stati::prelude::*;
 
 use colors::*;
 use io::{load_image, save, scale_image};
-use rand::{prelude::SliceRandom, Rng};
+use rand::{prelude::SliceRandom, Rng, SeedableRng};
 use scoring::{
     average, get_color_in_triangle, point_in_triangle, rectangle_by_points, score, score_for_group,
 };
@@ -195,6 +195,7 @@ async fn main() -> Result<()> {
                 let mut last_tris = tris.clone();
                 // counts the number of steps left
                 let mut iteration: usize = 0;
+                let mut rng = rand::rngs::StdRng::from_entropy();
 
                 'main: loop {
                     if iteration >= args.iterations {
@@ -204,7 +205,7 @@ async fn main() -> Result<()> {
 
                     // randomly iterate through the verticies of the grid
                     let mut verts = tris.clone().into_iter_verts().collect::<Vec<_>>();
-                    verts.shuffle(&mut rand::thread_rng());
+                    verts.shuffle(&mut rng);
                     for (x, y, _) in verts {
                         // for each vertex, run a optimization on it that shifts it to the best nearby position, if there is one.
                         optimize_one(&image, &mut tris, (x, y), &args);

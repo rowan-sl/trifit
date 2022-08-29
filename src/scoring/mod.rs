@@ -309,13 +309,17 @@ pub fn score(
                 .sum::<f64>()
                 / colors.len() as f64
                 / 25.5; /* scale into range of 0..100 */
-            assert!(0.0 <= average_color_distance && average_color_distance <= 100.0);
+            if !(0.0 <= average_color_distance && average_color_distance <= 100.0) {
+                warn!("average color distance out of range! (value: {average_color_distance})");
+            }
 
             let squareness = {
                 let m = max(width, height);
                 2.0 * ((((100.0 * (width + height)) / m) / 2.0) - 50.0)
             };
-            assert!(0.0 <= squareness && squareness <= 100.0);
+            if !(0.0 <= squareness && squareness <= 100.0) {
+                warn!("squareness out of range! (value: {squareness})");
+            }
 
             Score {
                 is_none: false,
