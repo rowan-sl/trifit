@@ -35,7 +35,7 @@ use colors::*;
 use io::{load_image, save, scale_image};
 use rand::{prelude::SliceRandom, Rng, SeedableRng};
 use scoring::{
-    average, get_color_in_triangle, point_in_triangle, rectangle_by_points, score, score_for_group,
+    average, get_color_in_triangle, point_in_triangle, rectangle_by_points, score, score_for_group
 };
 use triangle::Triangles;
 use vec2::F64x2;
@@ -346,10 +346,7 @@ async fn main() -> Result<()> {
                             .triangles_around_point(x, y)
                             .into_iter()
                             .for_each(|mut t| {
-                                let colors = get_color_in_triangle(&raw_image, t);
-
-                                let score =
-                                    score(t, &colors, &raw_image, args.tri_size, args.scoring);
+                                let score = score(t, &raw_image, args.tri_size, args.scoring).score_value();
                                 t = t.offset(40.0, 40.0);
                                 t = t.offset(
                                     (args.image_size - w) as f64 / 2.0,
@@ -373,10 +370,11 @@ async fn main() -> Result<()> {
 
                                     // let color = BLUE;
 
-                                    let color = rgba((score.score_value() * 25.5).clamp(0.0, 255.0) as u8, 0, 0, 1.0);
+                                    let color = rgba((score * 25.5).clamp(0.0, 255.0) as u8, 0, 0, 1.0);
                                     t.draw_outline(2.0, color, &c, gl);
                                 } else {
                                     let color;
+                                    let colors = get_color_in_triangle(&raw_image, t);
                                     if colors.is_empty() {
                                         color = rgba(0, 0, 0, 0.0);
                                     } else {
@@ -635,11 +633,11 @@ pub fn optimize_one(image: &RgbImage, tris: &mut Triangles, xy: (u32, u32), args
         .collect::<Vec<_>>();
     let best = scores.iter().max_by(|(_, _, a), (_, _, b)| a.cmp(b)); // larger scores are considered better
 
-    if let Some((mut dx, mut dy, mut best_score)) = best
+    if let Some((mut dx, mut dy, mut best_score)) = best.cloned()
     {
         if randomness != 0 {
             if rand::thread_rng().gen_bool(1.0 / randomness as f64) {
-                (dx, dy, best_score) = *scores.choose(&mut rand::thread_rng()).unwrap();
+                (dx, dy, best_score) = scores.choose(&mut rand::thread_rng()).unwrap().clone();
             }
         }
         if best_score.cmp(&original_score).is_gt()

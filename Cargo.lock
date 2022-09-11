@@ -2620,6 +2620,7 @@ name = "v2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "clap 3.2.8",
  "flume",
  "gif",
