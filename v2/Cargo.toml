@@ -1,0 +1,24 @@
+[package]
+name = "v2"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.65"
+ffmpeg-next = "5.1.1"
+flume = "0.10.14"
+# byte-slice-cast = "1.2.1"
+# gstreamer = "0.18.8"
+# gstreamer-app = "0.18.7"
+# gstreamer-audio = "0.18.7"
+# gstreamer-video = "0.18.7"
+image = "0.24.3"
+itertools = "0.10.4"
+log = "0.4.17"
+mp4 = "0.12.0"
+pretty_env_logger = "0.4.0"
+static_assertions = "1.1.0"
+symphonia = { version = "0.5.1", features = ["isomp4", "aac", "alac", "mp3"] }
+thiserror = "1.0.35"
