@@ -10,7 +10,7 @@ use imagerep::BlockedImage;
 // this will be configurable by a CLI later
 const IMAGE_PATH: &str = "../img/ted-hiking-002.jpg";
 const INPUT_CFG: InputConfig = InputConfig {
-    pixels_per_block: 5,
+    pixels_per_block: 150,
 };
 pub struct InputConfig {
     /// size (in pixels) of each 'block' that the image is broken up into (blocks are like pixels, but contains
@@ -23,38 +23,58 @@ pub struct OutputConfig {}
 
 fn main() -> Result<()> {
     pretty_env_logger::init();
-    let image = BlockedImage::new(
+    let blocked = BlockedImage::new(
         &image::open(IMAGE_PATH)?.to_rgb8(),
         INPUT_CFG.pixels_per_block,
     );
+
+    blocked.render_original_res().save("out.png")?;
+
+    // let atomic = tris::AtomicU64::new(0);
+    // let a = &atomic;
+    // let b = a;
+
+    // thread::scope(|scope| {
+    //     scope.spawn(move || drop(a));
+    //     scope.spawn(move || drop(b));
+    // });
+
+    // thread::spawn(move || drop(a));
+    // thread::spawn(move || drop(b));
 
     Ok(())
 }
 
 pub mod tris {
-    use std::mem;
+    pub use std::sync::atomic::AtomicU64;
+    use std::{
+        cell::UnsafeCell,
+        mem::{self, ManuallyDrop},
+        sync::atomic,
+    };
+    #[cfg(not(target_has_atomic = "64"))]
+    compile_error!("no atomic u64s?");
 
     use static_assertions::const_assert_eq;
 
-    /// since this type shares the same size and align as `u128`
+    /// since this type shares the same size and align as `PointRawStoreT`
     /// and contains no uninit bytes (because of explicit padding taking up the structs full size)
-    /// it may be safely transmuted between `Self` <-> `u128`
+    /// it may be safely transmuted between `Self` <-> `PointRawStoreT`
     ///
     /// it is safe to create a `mem::zeroed` of this type
     #[repr(C)]
     #[derive(Default, Debug, Clone, Copy, PartialEq)]
-    struct PointRaw {
-        //TODO possibly shrink this to a u64 vs u128, but for now the possiblity is kept open to be able to include more data in the future
+    pub struct PointRaw {
         pos: (f32, f32),
-        /// 8 bc (4+4) bytes of space is taken, this pads the struct to exactly 16 bytes in size (no unninit bytes)
-        __pad: [u8; 8],
-        /// this field can go anywhere, and has size zero. causes `PointRaw` to be aligned to `u128`
-        /// NOTE: this is NOT necessary for `transmute::<PointRaw, u128>` but it does make `*mut PointRaw as *mut u128` valid
+        /// 0 bc (4+4) bytes of space is taken, this pads the struct to exactly 8 bytes in size (no unninit bytes)
+        __pad: [u8; 0],
+        /// this field can go anywhere, and has size zero. causes `PointRaw` to be aligned to `PointRawStoreT`
+        /// NOTE: this is NOT necessary for `transmute::<PointRaw, PointRawStoreT>` but it does make `*mut PointRaw as *mut PointRawStoreT` valid
         __alignas: [PointRawStoreT; 0],
     }
-    type PointRawStoreT = u128;
-    const_assert_eq!(mem::size_of::<PointRawStoreT>(), 16);
-    const_assert_eq!(mem::size_of::<PointRaw>(), 16);
+    pub type PointRawStoreT = u64;
+    const_assert_eq!(mem::size_of::<PointRawStoreT>(), 8);
+    const_assert_eq!(mem::size_of::<PointRaw>(), 8);
     const_assert_eq!(mem::align_of::<PointRawStoreT>(), 8);
     const_assert_eq!(mem::align_of::<PointRaw>(), 8);
 
@@ -100,6 +120,58 @@ pub mod tris {
             Self {
                 pos: (pos[0], pos[1]),
                 ..Default::default()
+            }
+        }
+    }
+
+    union MaybeAtomicU64 {
+        // dont actually have to do anything special to drop, as in bolth cases here the type is not
+        // `Copy` due to UnsafeCell (which does not add any special drop requirements)
+        atomic: ManuallyDrop<AtomicU64>,
+        nonatomic: ManuallyDrop<UnsafeCell<u64>>,
+    }
+
+    pub struct MaybeAtomicPoint {
+        inner: MaybeAtomicU64,
+    }
+
+    impl MaybeAtomicPoint {
+        pub const fn new(atomic: bool) -> Self {
+            let inner = if atomic {
+                MaybeAtomicU64 {
+                    atomic: ManuallyDrop::new(AtomicU64::new(0)),
+                }
+            } else {
+                MaybeAtomicU64 {
+                    nonatomic: ManuallyDrop::new(UnsafeCell::new(0)),
+                }
+            };
+            Self { inner }
+        }
+
+        /// # Saftey
+        /// - is_atomic must match the atomicity of this value when it was created.
+        /// - if it is not atomic, the current thread must be the only one accessing it at this time
+        pub unsafe fn load(&self, is_atomic: bool) -> (f32, f32) {
+            PointRaw::from_storet(if is_atomic {
+                self.inner.atomic.load(atomic::Ordering::Relaxed)
+            } else {
+                self.inner.nonatomic.get().read()
+            })
+            .pos
+        }
+
+        /// # Saftey
+        /// - is_atomic must match the atomicity of this value when it was created.
+        /// - if it is not atomic, the current thread must be the only one accessing it at this time
+        pub unsafe fn store(&self, is_atomic: bool, pos: (f32, f32)) {
+            let as_storet = PointRaw::from(pos).into_storet();
+            if is_atomic {
+                self.inner
+                    .atomic
+                    .store(as_storet, atomic::Ordering::Relaxed);
+            } else {
+                self.inner.nonatomic.get().write(as_storet)
             }
         }
     }
@@ -173,6 +245,36 @@ pub mod imagerep {
 
         pub fn height(&self) -> u32 {
             self.height
+        }
+
+        pub fn into_blocks(self) -> Vec<Block> {
+            self.buffer
+        }
+
+        pub fn ppb(&self) -> u32 {
+            self.pixels_per_block
+        }
+
+        pub fn render_original_res(&self) -> RgbImage {
+            // TODO remove this bit once there is a proper get() function
+            let img = RgbImage::from_vec(
+                self.width(),
+                self.height(),
+                self
+                    .clone()
+                    .into_blocks()
+                    .into_iter()
+                    .flat_map(|block| block.avg_color.0)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+            RgbImage::from_fn(
+                self.width() * self.ppb(),
+                self.height() * self.ppb(),
+                |x, y| {
+                    *img.get_pixel(x / self.ppb(), y / self.ppb())
+                },
+            )
         }
     }
 
