@@ -7,7 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.65"
-ffmpeg-next = "5.1.1"
+derivative = "2.2.0"
+# ffmpeg-next = "5.1.1"
 flume = "0.10.14"
 # byte-slice-cast = "1.2.1"
 # gstreamer = "0.18.8"
@@ -17,8 +18,23 @@ flume = "0.10.14"
 image = "0.24.3"
 itertools = "0.10.4"
 log = "0.4.17"
-mp4 = "0.12.0"
+# mp4 = "0.12.0"
 pretty_env_logger = "0.4.0"
 static_assertions = "1.1.0"
-symphonia = { version = "0.5.1", features = ["isomp4", "aac", "alac", "mp3"] }
+# symphonia = { version = "0.5.1", features = ["isomp4", "aac", "alac", "mp3"] }
 thiserror = "1.0.35"
+gif = "0.11.4"
+clap = { version = "3.2.8", features = ["derive"] }
+piston = "0.53.0"
+piston2d-graphics = "0.42.0"
+pistoncore-glutin_window = "0.69.0"
+piston2d-opengl_graphics = "0.81.0"
+piston2d-sprite = "0.66.0"
+tokio = { version = "1.17.0", features = ["full"] }
+rand = "0.8.5"
+palette = "0.6.0"
+svg = "0.10.0"
+resvg = "0.23.0"
+usvg = "0.23.0"
+tiny-skia = "0.6.6"# version used by usvg
+lazysort = "0.2.1"
