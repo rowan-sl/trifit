@@ -1,5 +1,5 @@
 /target
-img
-out.png
-out.gif
+/img
+/out
+/v2/out
 .cargo
