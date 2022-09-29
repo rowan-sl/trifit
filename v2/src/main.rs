@@ -5,13 +5,10 @@ extern crate anyhow;
 
 pub mod swsrasv;
 
-use std::cmp;
-
 use anyhow::Result;
 use glutin_window::GlutinWindow;
 use image::DynamicImage;
 use opengl_graphics::{GlGraphics, OpenGL, Texture, TextureSettings};
-use palette::{chromatic_adaptation::AdaptInto, convert::TryFromColor};
 use piston::{
     event_loop::{EventSettings, Events},
     window::WindowSettings,
@@ -40,102 +37,6 @@ pub struct OutputConfig {}
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
-    use image::Rgba;
-    let raw_img = image::open("/home/rowansl/Downloads/rowan-tree-autumn.jpg")?;
-    let mut img = raw_img.to_rgba8();
-    let original_img = img.clone();
-    let bg = *img.get_pixel(0, 0);
-    fn color_dist(a: Rgba<u8>, b: Rgba<u8>) -> f64 {
-        let r = a.0[0] as f64 - b.0[0] as f64;
-        let g = a.0[1] as f64 - b.0[1] as f64;
-        let b = a.0[2] as f64 - b.0[2] as f64;
-        (r.powi(2) + g.powi(2) + b.powi(2)).sqrt()
-    }
-    for pixel in img.pixels_mut() {
-        let convert = |pixel: Rgba<u8>| {
-            let color: palette::Hsla = palette::Srgba::from_components((pixel.0[0] as f32 / 255.0, pixel.0[1] as f32 / 255.0, pixel.0[2] as f32 / 255.0, pixel.0[3] as f32 / 255.0)).adapt_into();
-            color
-        };
-
-        if (convert(*pixel).lightness - convert(bg).lightness).abs() < 50.0 / 255.0 {
-            pixel.0[3] = 0;
-        }
-
-        // *pixel = Rgba([(convert(*pixel).lightness * 254.0) as u8, 0, 0, 255]);
-
-        // let dist = color_dist(*pixel, bg) / ((2.0*255.0f64.powi(2)).sqrt() / 200.0);
-        // assert!(0.0 <= dist && dist <= 255.0, "{dist}");
-        // *pixel = Rgba([dist as u8, 0, 0, 255]);
-
-        // if color_dist(*pixel, bg) < 30.0 {
-        //     pixel.0= [252, 118, 219, 255];
-        // }
-    }
-    img.save("unsmoothed.png")?;
-    // return Ok(());
-    let mut last_iter = img.clone();
-    let mut smoothed = img.clone();
-
-    enum IterKind {
-        Soften(usize /* num nearby to set to colored */, u8 /* alpha value to set filled to */),
-        RemoveIsolated(usize /* num nearby to remove */),
-    }
-
-    let mut run_iteration = |kind: IterKind| {
-        for (x, y, pixel) in last_iter.enumerate_pixels() {
-            let neighbors = vec![
-                last_iter.get_pixel_checked(x+1, y),
-                if x != 0 { last_iter.get_pixel_checked(x-1,y) } else { None },
-                last_iter.get_pixel_checked(x,y+1),
-                if y != 0 { last_iter.get_pixel_checked(x,y-1) } else { None },
-            ].into_iter()
-            .filter(Option::is_some)
-            .map(Option::unwrap)
-            .collect::<Vec<_>>();
-            let num_some = neighbors.iter()
-                .filter(|near| near.0[3] != 0)
-                .count();
-            match kind {
-                IterKind::Soften(num, alpha) => {
-                    // if there are 3 nearby colored in pixels,
-                    // and the current pixel is none, set it to some in the output image
-                    if num_some >= num && pixel.0[3] == 0 {
-                        // color is still there, but not alpha
-                        smoothed.get_pixel_mut(x, y).0[3] = alpha;
-                    }
-                }
-                IterKind::RemoveIsolated(num) => {
-                    // and if there are no nearby, delete the current one
-                    if num_some <= num && pixel.0[3] == 255 {
-                        smoothed.get_pixel_mut(x, y).0[3] = 0;
-                    }
-                }
-            }
-        }
-        last_iter = smoothed.clone();
-    };
-
-    // run_iteration(IterKind::RemoveIsolated(1));
-    run_iteration(IterKind::RemoveIsolated(0));
-    run_iteration(IterKind::Soften(3, 255));
-    run_iteration(IterKind::Soften(2, 200));
-    // run_iteration(IterKind::Soften(2, 150));
-    run_iteration(IterKind::Soften(2, 100));
-    // run_iteration(IterKind::Soften(2, 50));
-
-    // for _ in 0..1 {
-    // }
-    smoothed.save("smoothed.png")?;
-    let mut composited = smoothed.clone();
-    for pixel in composited.pixels_mut() {
-        if pixel.0[3] == 0 {
-            pixel.0 = [150, 150, 150, 255];
-        }
-    }
-    composited.save("composited.png")?;
-    return Ok(());
-
-    // ! old main fn
 
     let raw_image = &image::open(IMAGE_PATH)?;
     let blocked = BlockedImage::new(&raw_image.to_rgb8(), INPUT_CFG.pixels_per_block);
