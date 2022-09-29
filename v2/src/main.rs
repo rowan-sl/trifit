@@ -20,15 +20,21 @@ use crate::{imagerep::BlockedImage, tris::point::MaybeAtomicPoint};
 // this will be configurable by a CLI later
 const IMAGE_PATH: &str = "../img/ted-hiking-002.jpg";
 const INPUT_CFG: InputConfig = InputConfig {
-    pixels_per_block: 50,
-    verts_per_block: 1,
+    num_verts: 50,
+    blocks_per_vert: 2,
+    // pixels_per_block: 50,
+    // verts_per_block: 1,
 };
 pub struct InputConfig {
-    /// size (in pixels) of each 'block' that the image is broken up into (blocks are like pixels, but contains
-    /// information about the individual subpixels they contain)
-    pub pixels_per_block: u32,
-    /// number of vericies per each block
-    pub verts_per_block: u32,
+    /// number of verts across the width of the image.
+    pub num_verts: u32,
+    /// number of `blocks` (pixels, basically) per vert across the width of the image
+    pub blocks_per_vert: u32,
+    // /// size (in pixels) of each 'block' that the image is broken up into (blocks are like pixels, but contains
+    // /// information about the individual subpixels they contain)
+    // pub pixels_per_block: u32,
+    // /// number of vericies per each block
+    // pub verts_per_block: u32,
 }
 const OUTPUT_PATH: &str = "out.png";
 const OUTPUT_CFG: OutputConfig = OutputConfig {};
@@ -38,59 +44,57 @@ pub struct OutputConfig {}
 async fn main() -> Result<()> {
     pretty_env_logger::init();
 
-    let raw_image = &image::open(IMAGE_PATH)?;
-    let blocked = BlockedImage::new(&raw_image.to_rgb8(), INPUT_CFG.pixels_per_block);
+    let blocked = {
+        let raw_image = &image::open(IMAGE_PATH)?;
+        let pixels_per_block = raw_image.width() / (INPUT_CFG.num_verts * INPUT_CFG.blocks_per_vert);
+        let blocked = BlockedImage::new(&raw_image.to_rgb8(), pixels_per_block);
+        blocked
+    };
 
-    let rendered_blocked = blocked.render_original_res();
+    let rendered_blocked = DynamicImage::ImageRgb8(blocked.render_original_res()).into_rgba8();
     rendered_blocked.save("out.png")?;
-    let rendered_blocked = DynamicImage::ImageRgb8(rendered_blocked).into_rgba8();
 
     //? code for creating tri grid
 
     // in block to enforece/make clear what is being used where
-    let (multfn, verts) = {
-        // (0, 0) is top left corner
-        // offset per "block" is 5 (regulates percision and stuff)
-        const OFFSET_PER_BLOCK: f64 = 5.0;
-        // let max_coords = (
-        //     OFFSET_PER_BLOCK * blocked.width() as f64,
-        //     OFFSET_PER_BLOCK * blocked.height() as f64,
-        // );
-        let verts_per_block = INPUT_CFG.verts_per_block; // true only for width
+    let (multfn, verts, (verts_per_row, num_rows)) = {
         // offset for x (=0.5) for each row.
         let offset_width_unit = 60.0f64.to_radians().cos();
         // dy for changing rows
         let inc_height_unit = 60.0f64.to_degrees().sin();
         let inc_width_unit = 2.0 * offset_width_unit;
 
-        // val to add each y inc
-        let inc_height_scaled = (inc_height_unit / verts_per_block as f64) * OFFSET_PER_BLOCK; // scale same ammount as width (verts per block does not hold here)
-        // val to add each x inc
-        let inc_width_scaled = (inc_width_unit / verts_per_block as f64) * OFFSET_PER_BLOCK;
-        // val to alternatingly subtract from x/leave for each row
-        let offset_width_scaled = (offset_width_unit / verts_per_block as f64) * OFFSET_PER_BLOCK;
+        const OFFSET_PER_VERT: f64 = 10.0;
+        let num_blocks_w = blocked.width();
+        let num_blocks_h = blocked.height();
+        let num_verts_w = (num_blocks_w as f64 / ( INPUT_CFG.blocks_per_vert as f64 * inc_width_unit /* not needed as is basically x*1, here for consistancy */)) as u32;
+        let num_verts_h = (num_blocks_h as f64 / ( INPUT_CFG.blocks_per_vert as f64 * inc_height_unit )) as u32;
 
-        let mut verts: Vec<MaybeAtomicPoint> = vec![];
-
-        let max_y_idx = ((verts_per_block * blocked.height()) as f64 / inc_height_unit).ceil() as u32;
-        // add y % 2 to this to get real x offset
-        let max_x_idx = verts_per_block * blocked.width();
-        for y in 0..=max_y_idx {
-            for x in 0..=(max_x_idx + y % 2) {
-                let is_atomic = false;
-                let atomic = MaybeAtomicPoint::new(is_atomic);
-                // TODO: calculate pos with multiplication to avoid accumulating error
-                unsafe { atomic.store(is_atomic, (x as f64 * inc_width_scaled - offset_width_scaled * (y % 2) as f64, y as f64 * inc_height_scaled)) }
-                verts.push(atomic);
+        let mut verts = Vec::<(f64, f64)>::new();
+        // size (x, y)
+        let (verts_per_row, num_rows) = (num_verts_w+1, num_verts_h);
+        for y in 0..=num_rows {
+            for x in 0..=verts_per_row {
+                verts.push(((x as f64 - offset_width_unit * (y % 2) as f64) * OFFSET_PER_VERT, y as f64 * OFFSET_PER_VERT));
             }
         }
+
+        let atomic_verts: Vec<MaybeAtomicPoint> = verts.into_iter()
+            .map(|vert| {
+                 let point = MaybeAtomicPoint::new(false);
+                 unsafe { point.store(false, vert) }
+                 point
+            })
+            .collect();
         (
             move |rect_size: (f64, f64)| {
-                let xmult = ((rect_size.0 / verts_per_block as f64) / blocked.width() as f64) / OFFSET_PER_BLOCK;
-                let ymult = ((rect_size.1 / verts_per_block as f64) / blocked.height() as f64) / OFFSET_PER_BLOCK;
+                // let xmult = ((rect_size.0 / verts_per_block as f64) / blocked.width() as f64) / OFFSET_PER_BLOCK;
+                // let ymult = ((rect_size.1 / verts_per_block as f64) / blocked.height() as f64) / OFFSET_PER_BLOCK;
+                let (xmult, ymult): (f64, f64) = ( rect_size.0 / num_verts_w as f64 / OFFSET_PER_VERT, rect_size.1 / num_verts_h as f64 / OFFSET_PER_VERT );
                 (xmult, ymult)
             },
-            verts
+            atomic_verts,
+            (verts_per_row, num_rows),
         )
     };
 
