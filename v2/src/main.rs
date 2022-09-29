@@ -47,49 +47,52 @@ async fn main() -> Result<()> {
 
     //? code for creating tri grid
 
-    // (0, 0) is top left corner
+    // in block to enforece/make clear what is being used where
+    let (multfn, verts) = {
+        // (0, 0) is top left corner
+        // offset per "block" is 5 (regulates percision and stuff)
+        const OFFSET_PER_BLOCK: f64 = 5.0;
+        // let max_coords = (
+        //     OFFSET_PER_BLOCK * blocked.width() as f64,
+        //     OFFSET_PER_BLOCK * blocked.height() as f64,
+        // );
+        let verts_per_block = INPUT_CFG.verts_per_block; // true only for width
+        // offset for x (=0.5) for each row.
+        let offset_width_unit = 60.0f64.to_radians().cos();
+        // dy for changing rows
+        let inc_height_unit = 60.0f64.to_degrees().sin();
+        let inc_width_unit = 2.0 * offset_width_unit;
 
-    // offset per "block" is 5 (regulates percision and stuff)
-    const OFFSET_PER_BLOCK: f64 = 5.0;
-    // let max_coords = (
-    //     OFFSET_PER_BLOCK * blocked.width() as f64,
-    //     OFFSET_PER_BLOCK * blocked.height() as f64,
-    // );
-    let verts_per_block = INPUT_CFG.verts_per_block; // true only for width
-    // offset for x (=0.5) for each row.
-    let offset_width_unit = 60.0f64.to_radians().cos();
-    // dy for changing rows
-    let inc_height_unit = 60.0f64.to_degrees().sin();
-    let inc_width_unit = 2.0 * offset_width_unit;
+        // val to add each y inc
+        let inc_height_scaled = (inc_height_unit / verts_per_block as f64) * OFFSET_PER_BLOCK; // scale same ammount as width (verts per block does not hold here)
+        // val to add each x inc
+        let inc_width_scaled = (inc_width_unit / verts_per_block as f64) * OFFSET_PER_BLOCK;
+        // val to alternatingly subtract from x/leave for each row
+        let offset_width_scaled = (offset_width_unit / verts_per_block as f64) * OFFSET_PER_BLOCK;
 
-    // val to add each y inc
-    let inc_height_scaled = (inc_height_unit / verts_per_block as f64) * OFFSET_PER_BLOCK; // scale same ammount as width (verts per block does not hold here)
-    // val to add each x inc
-    let inc_width_scaled = (inc_width_unit / verts_per_block as f64) * OFFSET_PER_BLOCK;
-    // val to alternatingly subtract from x/leave for each row
-    let offset_width_scaled = (offset_width_unit / verts_per_block as f64) * OFFSET_PER_BLOCK;
+        let mut verts: Vec<MaybeAtomicPoint> = vec![];
 
-    let mut verts: Vec<MaybeAtomicPoint> = vec![];
-    //? this may be wrong, so not using for now:
-    // let mut verts: Vec<MaybeAtomicPoint> = Vec::with_capacity(
-    //     ((verts_per_block * blocked.width()) as f64 /* < along x, this is what verts per block is true for */
-    //     * ((OFFSET_PER_BLOCK / offset_height_per_vert /* < number of verts per block (height) */)
-    //     * blocked.height() as f64) /* < along y, num of verts */
-    //     + 50.0/* extra because whatever */) as usize,
-    // );
-
-    let max_y_idx = ((verts_per_block * blocked.height()) as f64 / inc_height_unit).ceil() as u32;
-    // add y % 2 to this to get real x offset
-    let max_x_idx = verts_per_block * blocked.width();
-    for y in 0..=max_y_idx {
-        for x in 0..=(max_x_idx + y % 2) {
-            let is_atomic = false;
-            let atomic = MaybeAtomicPoint::new(is_atomic);
-            // TODO: calculate pos with multiplication to avoid accumulating error
-            unsafe { atomic.store(is_atomic, (x as f64 * inc_width_scaled - offset_width_scaled * (y % 2) as f64, y as f64 * inc_height_scaled)) }
-            verts.push(atomic);
+        let max_y_idx = ((verts_per_block * blocked.height()) as f64 / inc_height_unit).ceil() as u32;
+        // add y % 2 to this to get real x offset
+        let max_x_idx = verts_per_block * blocked.width();
+        for y in 0..=max_y_idx {
+            for x in 0..=(max_x_idx + y % 2) {
+                let is_atomic = false;
+                let atomic = MaybeAtomicPoint::new(is_atomic);
+                // TODO: calculate pos with multiplication to avoid accumulating error
+                unsafe { atomic.store(is_atomic, (x as f64 * inc_width_scaled - offset_width_scaled * (y % 2) as f64, y as f64 * inc_height_scaled)) }
+                verts.push(atomic);
+            }
         }
-    }
+        (
+            move |rect_size: (f64, f64)| {
+                let xmult = ((rect_size.0 / verts_per_block as f64) / blocked.width() as f64) / OFFSET_PER_BLOCK;
+                let ymult = ((rect_size.1 / verts_per_block as f64) / blocked.height() as f64) / OFFSET_PER_BLOCK;
+                (xmult, ymult)
+            },
+            verts
+        )
+    };
 
     //? rendering code
 
@@ -158,13 +161,10 @@ async fn main() -> Result<()> {
                         gl,
                     );
 
-                // offset per vert on screen. ... / OFFSET_PER_BLOCK is the same as ... * (x|y / OFFSET_PER_BLOCK)
-                let xmult = ((rect_size.0 / verts_per_block as f64) / blocked.width() as f64) / OFFSET_PER_BLOCK;
-                let ymult = ((rect_size.1 / verts_per_block as f64) / blocked.height() as f64) / OFFSET_PER_BLOCK;
+                let (xmult, ymult) = multfn(rect_size);
                 for point in &verts {
                     // saftey: yes
                     let (x, y) = unsafe { point.load(false) };
-                    // println!("({x},{y}), max={:?}", (rect_size.0 + padding.0, rect_size.1 + padding.1));
                     let (dx, dy) = padding;
                     graphics::Ellipse::new(rgba(255, 36, 255, 0.7)).draw(
                         graphics::rectangle::centered_square(x*xmult + dx + offset_w, y*ymult + dy + offset_h, 3.0),
