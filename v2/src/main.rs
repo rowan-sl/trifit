@@ -40,6 +40,10 @@ const OUTPUT_PATH: &str = "out.png";
 const OUTPUT_CFG: OutputConfig = OutputConfig {};
 pub struct OutputConfig {}
 
+struct PointAccess {
+
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
@@ -88,8 +92,6 @@ async fn main() -> Result<()> {
             .collect();
         (
             move |rect_size: (f64, f64)| {
-                // let xmult = ((rect_size.0 / verts_per_block as f64) / blocked.width() as f64) / OFFSET_PER_BLOCK;
-                // let ymult = ((rect_size.1 / verts_per_block as f64) / blocked.height() as f64) / OFFSET_PER_BLOCK;
                 let (xmult, ymult): (f64, f64) = ( rect_size.0 / num_verts_w as f64 / OFFSET_PER_VERT, rect_size.1 / num_verts_h as f64 / OFFSET_PER_VERT );
                 (xmult, ymult)
             },
@@ -166,11 +168,19 @@ async fn main() -> Result<()> {
                     );
 
                 let (xmult, ymult) = multfn(rect_size);
-                for point in &verts {
+                let target = (3, 3);
+                assert!(target.1 <= num_rows && target.0 <= verts_per_row);
+                let ti = (verts_per_row+1) * target.1 + target.0;
+                for (i, point) in verts.iter().enumerate() {
                     // saftey: yes
+                    let iy = i / verts_per_row as usize;
+                    let ix = i - (verts_per_row as usize+1) * (i / verts_per_row as usize);
+                    if i == ti as usize {
+                        println!("{target:?}, ({ix},{iy})");
+                    }
                     let (x, y) = unsafe { point.load(false) };
                     let (dx, dy) = padding;
-                    graphics::Ellipse::new(rgba(255, 36, 255, 0.7)).draw(
+                    graphics::Ellipse::new(if i == ti as usize { rgba(0, 255, 0, 0.7) } else { rgba(255, 36, 255, 0.7) }).draw(
                         graphics::rectangle::centered_square(x*xmult + dx + offset_w, y*ymult + dy + offset_h, 3.0),
                         &graphics::DrawState::default(),
                         c.transform,
