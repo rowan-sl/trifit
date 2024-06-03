@@ -36,7 +36,7 @@
           ];
         };
         # compile-time
-        nativeBuildInputs = with pkgs; [
+        nativeBuildInputs = with pkgs; with pkgs.xorg; [
           rustToolchain clang mold-wrapped pkg-config
           libxcb
           libXcursor
